@@ -1,0 +1,25 @@
+{
+  "name": "Ferrix",
+  "id": "com.ryujane.ferrix",
+  "version": "0.1.1",
+  "build": 1,
+  "rust": ".",
+  "appearance": "dark",
+  "theme": "theme.json",
+  "icon": "icon.png",
+  "window": {
+    "titleBar": {
+      "style": "hidden",
+      "height": 38
+    }
+  },
+  "updater": {
+    "github": "ryujane/Ferrix",
+    "packages": {
+      "roots": [
+        "UdIi8xqmNa/NR7Qj9cUf5pmnckZ2oFn7sThkKr1ZVMk="
+      ]
+    }
+  },
+  "minRuntime": "0.6.0"
+}

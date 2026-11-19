@@ -1,0 +1,6 @@
+.nsh/
+target/
+.worktrees/
+.tools/
+/docs/performance/
+prototypes/

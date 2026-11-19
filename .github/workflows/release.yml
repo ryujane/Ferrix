@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  NSH_VERSION: v0.6.0
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  package:
+    name: Package (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: macos
+            platform: macos-aarch64
+            extension: tar.gz
+            cli: nsh-macos-arm64.tar.gz
+          - runner: macos-15-intel
+            target: macos
+            platform: macos-x86_64
+            extension: tar.gz
+            cli: nsh-macos-x86_64.tar.gz
+          - runner: windows-2025
+            target: windows
+            platform: windows-x86_64
+            extension: zip
+            cli: nsh-windows-x86_64.zip
+          - runner: ubuntu-24.04
+            target: linux
+            platform: linux-x86_64
+            extension: tar.gz
+            cli: nsh-linux-x86_64.tar.gz
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify release version
+        run: |
+          version=$(node -p 'require("./nsh.json").version')
+          if [[ ! $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ || "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo '::error::The release tag must be vX.Y.Z and match the version in nsh.json.'
+            exit 1
+          fi
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev libgtk-4-dev libwebkitgtk-6.0-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - name: Configure Windows build tools
+        if: runner.os == 'Windows'
+        run: |
+          printf '%s\n' 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' 'RUST_MIN_STACK=268435456' >> "$GITHUB_ENV"
+
+      - name: Install NSH
+        env:
+          NSH_ARCHIVE: ${{ matrix.cli }}
+        run: bash .github/scripts/setup-nsh.sh "$NSH_ARCHIVE"
+
+      - name: Build desktop archive
+        id: build
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          EXTENSION: ${{ matrix.extension }}
+        run: |
+          nsh --version
+          nsh package --target "$TARGET"
+          archive=".nsh/out/Ferrix-${GITHUB_REF_NAME#v}-$PLATFORM.$EXTENSION"
+          if [[ ! -s $archive ]]; then
+            echo "::error::Missing release archive $archive"
+            exit 1
+          fi
+          printf 'archive=%s\n' "$archive" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ferrix-${{ matrix.platform }}
+          path: ${{ steps.build.outputs.archive }}
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          overwrite: true
+
+  release:
+    name: Publish GitHub Release
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ferrix-*
+          merge-multiple: true
+          path: .nsh/release
+
+      - name: Install NSH
+        run: bash .github/scripts/setup-nsh.sh nsh-linux-x86_64.tar.gz
+
+      - name: Generate desktop update manifest
+        run: |
+          archives=(.nsh/release/Ferrix-"${GITHUB_REF_NAME#v}"-{macos-aarch64.tar.gz,macos-x86_64.tar.gz,windows-x86_64.zip,linux-x86_64.tar.gz})
+          nsh update-manifest "${archives[@]}" --out .nsh/release
+
+      - name: Publish release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then
+            if [[ $draft == false ]]; then
+              echo "Release $tag is already published."
+              exit 0
+            fi
+          else
+            gh release create "$tag" --verify-tag --draft --generate-notes
+          fi
+
+          gh release upload "$tag" .nsh/release/*.tar.gz .nsh/release/*.zip .nsh/release/latest.json --clobber
+          gh release edit "$tag" --draft=false
