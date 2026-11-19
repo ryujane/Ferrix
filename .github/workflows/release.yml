@@ -24,6 +24,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       RUSTUP_TOOLCHAIN: stable
+      PLATFORM: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev libgtk-4-dev libwebkitgtk-6.0-dev \
+          sudo apt-get install -y clang libclang-dev dpkg-dev libgtk-4-dev libwebkitgtk-6.0-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       - name: Configure Windows build tools
@@ -83,10 +84,8 @@ jobs:
         run: bash .github/scripts/setup-nsh.sh "$NSH_ARCHIVE"
 
       - name: Build desktop archive
-        id: build
         env:
           TARGET: ${{ matrix.target }}
-          PLATFORM: ${{ matrix.platform }}
           EXTENSION: ${{ matrix.extension }}
         run: |
           nsh --version
@@ -96,12 +95,35 @@ jobs:
             echo "::error::Missing release archive $archive"
             exit 1
           fi
-          printf 'archive=%s\n' "$archive" >> "$GITHUB_OUTPUT"
+          mkdir -p .nsh/release-assets
+          cp "$archive" .nsh/release-assets/
+
+      - name: Build macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          bash .github/scripts/package-dmg.sh .nsh/out/Ferrix.app \
+            ".nsh/release-assets/Ferrix-${GITHUB_REF_NAME#v}-$PLATFORM.dmg"
+
+      - name: Collect Windows installer
+        if: runner.os == 'Windows'
+        run: |
+          installer=.nsh/out/Ferrix-setup.exe
+          if [[ ! -s $installer ]]; then
+            echo '::error::Missing Ferrix-setup.exe. NSH needs Inno Setup to build it.'
+            exit 1
+          fi
+          cp "$installer" ".nsh/release-assets/Ferrix-${GITHUB_REF_NAME#v}-$PLATFORM-setup.exe"
+
+      - name: Build Linux DEB
+        if: runner.os == 'Linux'
+        run: |
+          bash .github/scripts/package-deb.sh .nsh/out/Ferrix "${GITHUB_REF_NAME#v}" \
+            ".nsh/release-assets/Ferrix-${GITHUB_REF_NAME#v}-$PLATFORM.deb"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ferrix-${{ matrix.platform }}
-          path: ${{ steps.build.outputs.archive }}
+          path: .nsh/release-assets/
           if-no-files-found: error
           include-hidden-files: true
           compression-level: 0
@@ -128,9 +150,17 @@ jobs:
       - name: Install NSH
         run: bash .github/scripts/setup-nsh.sh nsh-linux-x86_64.tar.gz
 
-      - name: Generate desktop update manifest
+      - name: Verify installers and generate desktop update manifest
         run: |
-          archives=(.nsh/release/Ferrix-"${GITHUB_REF_NAME#v}"-{macos-aarch64.tar.gz,macos-x86_64.tar.gz,windows-x86_64.zip,linux-x86_64.tar.gz})
+          prefix=".nsh/release/Ferrix-${GITHUB_REF_NAME#v}"
+          archives=("$prefix"-{macos-aarch64.tar.gz,macos-x86_64.tar.gz,windows-x86_64.zip,linux-x86_64.tar.gz})
+          installers=("$prefix"-{macos-aarch64.dmg,macos-x86_64.dmg,windows-x86_64-setup.exe,linux-x86_64.deb})
+          for asset in "${archives[@]}" "${installers[@]}"; do
+            if [[ ! -s $asset ]]; then
+              echo "::error::Missing release asset $asset"
+              exit 1
+            fi
+          done
           nsh update-manifest "${archives[@]}" --out .nsh/release
 
       - name: Publish release and assets
@@ -147,5 +177,5 @@ jobs:
             gh release create "$tag" --verify-tag --draft --generate-notes
           fi
 
-          gh release upload "$tag" .nsh/release/*.tar.gz .nsh/release/*.zip .nsh/release/latest.json --clobber
+          gh release upload "$tag" .nsh/release/*.{tar.gz,zip,dmg,exe,deb} .nsh/release/latest.json --clobber
           gh release edit "$tag" --draft=false
