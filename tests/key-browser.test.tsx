@@ -2,6 +2,31 @@ import { expect, open, test } from "nsh/test";
 
 const options = { width: 400, height: 650, platform: "macos" as const };
 
+test("key search sends substring and explicit glob patterns", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.type("live-key-filter", "bucket");
+  await app.submit("live-key-filter");
+  expect(app.texts()).toContain("SCAN MATCH *bucket*");
+
+  await app.clear("live-key-filter");
+  await app.type("live-key-filter", "bucket:*");
+  await app.press("workspace-apply-filter");
+  expect(app.texts()).toContain("SCAN MATCH bucket:*");
+
+  await app.clear("live-key-filter");
+  await app.submit("live-key-filter");
+  expect(app.texts()).toContain("SCAN MATCH (all keys)");
+});
+
+test("key search reads all cursor pages, including empty batches", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.type("live-key-filter", "sparse");
+  await app.submit("live-key-filter");
+  await app.waitFor("text:Scan complete");
+  expect(app.texts()).toContain("Keys 117");
+  expect(app.count("workspace-load-more")).toBe(0);
+});
+
 test("key browser keeps folder and key navigation across SCAN pages", async () => {
   const app = await open("./key-browser.fixture.tsx", options);
   await app.press("load-small");

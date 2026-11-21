@@ -136,7 +136,7 @@ export function createWorkspaceState(
   const keys = signal(new KeyInventory(), { equals: false }),
     tabs = signal<KeyTab[]>([]),
     activeId = signal<string>();
-  const pattern = signal("*"),
+  const pattern = signal(""),
     scan = signal<RedisKeyScan>(),
     scanBusy = signal(false),
     scanStopped = signal(false),
@@ -192,6 +192,7 @@ export function createWorkspaceState(
     disposed = false,
     ttlBusy = false;
   let autoOpenPending = true;
+  let filteredScan = false;
   let bulkJob: { cancelled: boolean; scan?: RedisKeyScan } | undefined;
   const loads = new Map<string, number>();
   const previewLoads = new Map<string, number>();
@@ -309,43 +310,41 @@ export function createWorkspaceState(
     const handle = scan();
     if (!handle || scanBusy() || complete() || switching()) return;
     const current = scanRevision;
+    const filtered = filteredScan;
+    const entries = keys();
     scanBusy.set(true);
     error.set("");
     try {
-      let page = await handle.nextPage();
-      if (disposed || current !== scanRevision) return;
-      while (!page.keys.length && !page.complete) {
-        continuation.set(page.continuation ?? null);
-        page = await handle.nextPage();
+      for (;;) {
+        const page = await handle.nextPage();
         if (disposed || current !== scanRevision) return;
-      }
-      const entries = keys();
-      const added = entries.appendPage(page.keys).map((index) => page.keys[index]);
-      if (added.length) keys.set(entries);
-      complete.set(page.complete);
-      continuation.set(page.continuation ?? null);
-      if (page.complete) cancelScan();
-      if (added.length) {
-        try {
-          const metadata = await session.getKeyInfoBatch(
-            added,
-            { keyType: true },
-          );
+        complete.set(page.complete);
+        continuation.set(page.continuation ?? null);
+        if (page.complete) cancelScan();
+
+        const added = page.keys.length
+          ? entries.appendPage(page.keys).map((index) => page.keys[index])
+          : [];
+        if (added.length) {
+          keys.set(entries);
+          try {
+            // KeyInventory associates metadata with the most recently appended page.
+            const metadata = await session.getKeyInfoBatch(added, {
+              keyType: true,
+            });
+            if (disposed || current !== scanRevision) return;
+            if (entries.setTypes(metadata.items)) keys.set(entries);
+          } catch {
+            /* A denied metadata command must not hide successfully scanned Keys. */
+          }
           if (disposed || current !== scanRevision) return;
-          if (entries.setTypes(metadata.items)) keys.set(entries);
-        } catch {
-          /* A denied metadata command must not hide successfully scanned Keys. */
         }
-      }
-      if (
-        !disposed &&
-        current === scanRevision &&
-        autoOpenPending &&
-        !tabs().length &&
-        entries.length
-      ) {
-        const first = entries.firstEntry();
-        if (first) void openKey(first.key);
+        if (autoOpenPending && !tabs().length && entries.length) {
+          const first = entries.firstEntry();
+          if (first) void openKey(first.key);
+        }
+        if (page.complete || switching() || (!filtered && page.keys.length > 0))
+          break;
       }
     } catch (cause) {
       if (!disposed && current === scanRevision) reportError(safeError(cause));
@@ -365,9 +364,11 @@ export function createWorkspaceState(
     error.set("");
     const filter = pattern(),
       match = /[*?\[\\]/.test(filter) ? filter : `*${filter}*`;
+    const scanPattern = filter && match !== "*" ? encode(match) : undefined;
+    filteredScan = !!scanPattern;
     try {
       scan.set(session.startKeyScan({
-        pattern: filter && match !== "*" ? encode(match) : undefined,
+        pattern: scanPattern,
         count: preferences().scanCount,
       }));
       return nextPage();

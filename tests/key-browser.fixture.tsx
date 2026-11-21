@@ -10,6 +10,7 @@ function Fixture() {
   setLocale("en");
   const selected = signal("");
   const action = signal("");
+  const scanPattern = signal("");
   const pageHeld = signal(false);
   const cancelled = signal(0);
   const disposed = signal(0);
@@ -20,10 +21,25 @@ function Fixture() {
     getInfo: () => ({ database: 0 }),
     getKeyInfo: async () => ({ exists: false }),
     getKeyInfoBatch: async () => ({ items: [] }),
-    startKeyScan() {
+    startKeyScan({ pattern }: { pattern?: Uint8Array }) {
+      const match = pattern ? decode(pattern) ?? "" : "";
+      scanPattern.set(match);
       let page = 0;
       return {
         async nextPage() {
+          if (match === "*sparse*") {
+            const current = page++;
+            const complete = current === 26;
+            return {
+              keys: current % 2
+                ? Array.from({ length: 9 }, (_, index) =>
+                    encode(`sparse:key-${current}-${index}`),
+                  )
+                : [],
+              complete,
+              continuation: complete ? null : String(current + 1),
+            };
+          }
           if (large) {
             const first = page++ * 8_000;
             const end = Math.min(first + 8_000, 215_000);
@@ -82,6 +98,7 @@ function Fixture() {
       <Text>{`Selected ${selected()}`}</Text>
       <Text>{action()}</Text>
       <Text>{`Keys ${state.keys().length}`}</Text>
+      <Text>{`SCAN MATCH ${scanPattern() || "(all keys)"}`}</Text>
       <Text>{`Cancelled ${cancelled()} / disposed ${disposed()}`}</Text>
       <KeyBrowser
         state={state}
