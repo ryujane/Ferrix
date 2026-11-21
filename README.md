@@ -1,8 +1,10 @@
 # Ferrix
 
+[简体中文](README.zh-CN.md)
+
 Ferrix is a native Redis desktop client built with [nsh](https://nsh.dev) mixed mode:
 a Rust core and a TSX interface in one repository. The target platforms are macOS,
-Windows and Linux; local platform verification runs on macOS.
+Windows and Linux.
 
 The app opens a native, resizable Redis workspace with dark/light themes, key
 search, tabs, a folding JSON editor and an example console. The window currently
