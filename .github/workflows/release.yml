@@ -12,7 +12,7 @@ concurrency:
   group: release-${{ github.ref }}
 
 env:
-  NSH_VERSION: v0.6.0
+  NSH_VERSION: v0.6.1
 
 defaults:
   run:

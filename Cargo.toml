@@ -1,6 +1,6 @@
 [package]
 name = "nsh-app-ferrix"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 
@@ -11,8 +11,8 @@ redis-observer = []
 native-performance = ["redis-observer"]
 
 [dependencies]
-nsh-base = { git = "https://github.com/longbridge/nsh", tag = "v0.6.0" }
-nsh-core = { git = "https://github.com/longbridge/nsh", tag = "v0.6.0" }
+nsh-base = { git = "https://github.com/longbridge/nsh", tag = "v0.6.1" }
+nsh-core = { git = "https://github.com/longbridge/nsh", tag = "v0.6.1" }
 redis = { version = "1.8.1", features = ["tokio-rustls-comp"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
@@ -45,8 +45,8 @@ tempfile = "3"
 rust-argon2 = "3"
 
 [dev-dependencies]
-nsh-bundler = { git = "https://github.com/longbridge/nsh", tag = "v0.6.0" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", tag = "v0.6.0" }
+nsh-bundler = { git = "https://github.com/longbridge/nsh", tag = "v0.6.1" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", tag = "v0.6.1" }
 tempfile = "3"
 rcgen = "0.14"
 serde_json = "1"
@@ -55,12 +55,12 @@ rand = "0.10"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinHttp"] }
 # Keep the platform runner on the same NSH Git checkout as the app.
-nsh-platform-windows = { git = "https://github.com/longbridge/nsh", tag = "v0.6.0" }
+nsh-platform-windows = { git = "https://github.com/longbridge/nsh", tag = "v0.6.1" }
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
-nsh-platform-macos = { git = "https://github.com/longbridge/nsh", tag = "v0.6.0" }
+nsh-platform-macos = { git = "https://github.com/longbridge/nsh", tag = "v0.6.1" }
 serde_json = "1"
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 

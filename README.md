@@ -25,7 +25,7 @@ operations; connecting those operations to the window is a separate integration.
 
 ## Development
 
-Use the nsh 0.6.0 stable CLI to match the `nsh-*` dependencies pinned in
+Use the nsh 0.6.1 stable CLI to match the `nsh-*` dependencies pinned in
 `Cargo.lock`. Check the installed version with `nsh --version`.
 
 ```sh
