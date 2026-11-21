@@ -166,14 +166,10 @@ pub(super) async fn connect_configured(
                                     | "TLS_UNTRUSTED_ISSUER"
                                     | "TLS_HOSTNAME_MISMATCH"
                                     | "TLS_HANDSHAKE_FAILED"
-                                    | "SSH_HOST_KEY_MISMATCH"
-                                    | "SSH_AUTHENTICATION_FAILED"
-                                    | "SSH_KEY_INVALID"
-                                    | "SSH_KEY_UNSUPPORTED"
                             )
-                        ) && definitive.is_none()
+                        ) || ssh::is_security_error(&cause)
                         {
-                            definitive = Some(cause.clone());
+                            definitive.get_or_insert_with(|| cause.clone());
                         }
                         last = cause;
                     }

@@ -23,7 +23,9 @@ export function Field(props: {
 }) {
   const visible = signal(false);
   return (
-    <View class={`flex-1 min-w-0 ${props.compact ? "gap-1.5" : "gap-2"}`}>
+    <View
+      class={`min-w-0 ${props.multiline ? "shrink-0" : "flex-1"} ${props.compact ? "gap-1.5" : "gap-2"}`}
+    >
       <Text
         class={
           props.compact

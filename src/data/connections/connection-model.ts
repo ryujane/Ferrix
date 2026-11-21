@@ -253,7 +253,6 @@ export function validateConnection(
       !host(s.host) ||
       !integer(s.port, 1, 65535) ||
       !s.username.trim() ||
-      !/^SHA256:[A-Za-z0-9+/]{43}$/.test(s.fingerprint.trim()) ||
       (s.authentication === "password" ? !s.password : !s.privateKey.trim())
     )
       return fail("invalidSsh", "security");

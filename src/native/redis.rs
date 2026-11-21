@@ -24,7 +24,7 @@ mod sentinel;
 mod ssh;
 mod transport;
 use proxy::RedisProxyOptions;
-use ssh::RedisSshOptions;
+use ssh::{RedisSshOptions, SshHostKeyOptions};
 use transport::Transport;
 mod json;
 mod strings;
@@ -127,6 +127,13 @@ impl Redis {
     pub async fn export_pub_sub_logs(content: String) -> Result<Option<String>, JsError> {
         pubsub::export_logs(content).await
     }
+
+    /// Read the SSH gateway fingerprint and end the handshake before user authentication.
+    /// The caller must confirm or independently verify it before using it to connect.
+    pub fn probe_ssh_host_key(options: SshHostKeyOptions) -> Result<Later<String>, JsError> {
+        ssh::probe_host_key(options)
+    }
+
     /// Open an owned Standalone Session. The Promise rejects with a stable `code`.
     pub fn connect_standalone(options: StandaloneOptions) -> Result<Later<RedisSession>, JsError> {
         options.validate()?;

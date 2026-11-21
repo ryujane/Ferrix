@@ -90,6 +90,18 @@ Implementation: `src/native/redis/slowlog.rs` and the page-local
 [SLOWLOG GET](https://redis.io/docs/latest/commands/slowlog-get/) and
 [SLOWLOG LEN](https://redis.io/docs/latest/commands/slowlog-len/).
 
+## SSH host fingerprints
+
+For a new SSH gateway, **Test Connection** and **Save & Connect** show the
+gateway address and fingerprint before SSH login. Check the fingerprint with
+the gateway administrator and choose **Trust and continue**. Saving keeps the
+approved fingerprint with the connection settings. Future connections reject a
+different key. If your administrator has rotated the key, **Test Connection**
+offers **Verify SSH host again** after a mismatch.
+
+SSH login supports Ed25519, ECDSA and 2048–4096-bit RSA private keys. RSA login
+uses SHA-2 signatures. RSA keys can be supplied in OpenSSH or PEM format.
+
 ## Network proxy
 
 The connection editor's Advanced tab supports System, SOCKS5 or HTTP CONNECT

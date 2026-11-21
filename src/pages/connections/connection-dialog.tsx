@@ -1,5 +1,5 @@
 import { cleanup, signal, Scroll, Text, token, View } from "nsh";
-import { Input, Popover, Switch } from "nsh/base";
+import { AlertDialog, Input, Popover, Switch } from "nsh/base";
 import { Action } from "../../components/action";
 import { Icon } from "../../components/icon";
 import {
@@ -15,7 +15,11 @@ import {
 } from "../../data/connections/connection-model";
 import { hubT } from "../../i18n";
 import { safeError } from "../../utils/errors";
-import { testConnection } from "../../data/connections/connection-client";
+import {
+  probeSshHostKey,
+  sshGateway,
+  testConnection,
+} from "../../data/connections/connection-client";
 import type { ConnectionHub } from "../../data/connections/connection-state";
 import {
   Choice,
@@ -40,8 +44,13 @@ export function ConnectionDialog(props: {
     tab = signal("connection"),
     error = signal(""),
     test = signal(""),
+    sshKeyMismatch = signal(false),
     testing = signal(false),
     saving = signal(false);
+  let trustedGateway = sshGateway(props.value.config.ssh);
+  const isTrustedGateway = (gateway: ReturnType<typeof sshGateway>) =>
+    gateway.host.toLowerCase() === trustedGateway.host.toLowerCase() &&
+    gateway.port === trustedGateway.port;
   let revision = 0,
     closed = false;
   cleanup(() => {
@@ -52,6 +61,7 @@ export function ConnectionDialog(props: {
     draft.set({ ...draft(), ...value });
     ++revision;
     test.set("");
+    sshKeyMismatch.set(false);
     error.set("");
   };
   const config = (value: Partial<Config>) => {
@@ -75,45 +85,96 @@ export function ConnectionDialog(props: {
     error.set("");
     return true;
   }
-  async function runTest() {
-    if (testing() || !validate(false)) return;
-    const current = revision;
+  async function confirmSshHostKey(current: number, recheck = false) {
+    const settings = draft().config;
+    const { ssh } = settings;
+    const gateway = sshGateway(ssh);
+    if (
+      !ssh.enabled ||
+      (!recheck && ssh.fingerprint.trim() && isTrustedGateway(gateway))
+    )
+      return current;
+
+    const fingerprint = await probeSshHostKey(settings);
+    if (closed || current !== revision) return;
+    const description = hubT("sshTrustPrompt", {
+      host: ssh.host.trim(),
+      port: ssh.port,
+    });
+    const { action } = await AlertDialog.show({
+      title: hubT("sshTrustTitle"),
+      description: `${description}\n\n${fingerprint}`,
+      actions: [
+        { id: "cancel", label: hubT("cancel"), role: "cancel" },
+        { id: "trust", label: hubT("sshTrustConnect") },
+      ],
+      closeOnEscape: true,
+    });
+    if (action !== "trust" || closed || current !== revision) return;
+    trustedGateway = gateway;
+    config({ ssh: { ...ssh, fingerprint } });
+    return revision;
+  }
+  async function runTest(recheck = false) {
+    if (testing() || saving() || !validate(false)) return;
+    let current = revision;
     testing.set(true);
     test.set(hubT("testing"));
     try {
+      const approved = await confirmSshHostKey(current, recheck);
+      if (closed || approved !== revision) {
+        if (!closed && current === revision)
+          test.set(sshKeyMismatch() ? hubT("sshMismatch") : "");
+        return;
+      }
+      current = approved;
+      sshKeyMismatch.set(false);
+      test.set(hubT("testing"));
       await testConnection(draft().config);
       if (!closed && current === revision) test.set(hubT("testSuccess"));
     } catch (cause) {
-      if (!closed && current === revision) test.set(safeError(cause));
+      if (!closed && current === revision) {
+        const code = (cause as { code?: string })?.code;
+        sshKeyMismatch.set(code === "SSH_HOST_KEY_MISMATCH");
+        test.set(safeError(cause));
+      }
     } finally {
       if (!closed) testing.set(false);
     }
   }
-  async function save(connect: boolean) {
-    if (saving() || !validate()) return;
+  async function saveAndConnect() {
+    if (saving() || testing() || !validate()) return;
+    let current = revision;
     saving.set(true);
-    const value = copyConnection(draft());
-    const ok = await props.hub.save(value);
-    if (!ok) {
-      error.set(props.hub.error());
-      saving.set(false);
-      return;
-    }
-    props.onSaved(value.id);
-    if (connect) {
+    try {
+      const approved = await confirmSshHostKey(current);
+      if (closed || approved !== revision) return;
+      current = approved;
+      const value = copyConnection(draft());
+      if (!value.config.ssh.enabled && !isTrustedGateway(sshGateway(value.config.ssh)))
+        value.config.ssh.fingerprint = "";
+      const ok = await props.hub.save(value);
+      if (closed) return;
+      if (!ok) {
+        error.set(props.hub.error());
+        return;
+      }
+      props.onSaved(value.id);
       const connected = await props.hub.connect(value);
+      if (closed) return;
       if (!connected) {
         error.set(props.hub.error());
-        saving.set(false);
         return;
       }
       const openWorkspace = props.onConnected;
       // Finish dismissing the native dialog before replacing its NavPage.
       props.onClose();
       setTimeout(openWorkspace, 0);
-      return;
+    } catch (cause) {
+      if (!closed && current === revision) error.set(safeError(cause));
+    } finally {
+      if (!closed) saving.set(false);
     }
-    props.onClose();
   }
   const field = (
     key:
@@ -415,16 +476,6 @@ export function ConnectionDialog(props: {
                         }
                       />
                     </If>
-                    <Field
-                      compact
-                      label={hubT("fingerprint")}
-                      placeholder="SHA256:…"
-                      value={draft().config.ssh.fingerprint}
-                      onChange={(fingerprint) =>
-                        config({ ssh: { ...draft().config.ssh, fingerprint } })
-                      }
-                    />
-                    <Hint>{hubT("fingerprintHint")}</Hint>
                   </>
                 </If>
               </View>
@@ -522,6 +573,13 @@ export function ConnectionDialog(props: {
             {test() || hubT("notTested")}
           </Text>
         </View>
+        <If when={sshKeyMismatch() && !testing() && !saving()}>
+          <HubAction
+            testID="connection-recheck-ssh-host"
+            label={hubT("sshRecheckHost")}
+            onPress={() => void runTest(true)}
+          />
+        </If>
         <HubAction
           label={hubT("cancel")}
           disabled={saving()}
@@ -532,8 +590,8 @@ export function ConnectionDialog(props: {
             testID="connection-save-connect"
             primary
             label={hubT(saving() ? "saving" : "saveConnect")}
-            disabled={saving()}
-            onPress={() => void save(true)}
+            disabled={saving() || testing()}
+            onPress={() => void saveAndConnect()}
           />
         </View>
       </View>
