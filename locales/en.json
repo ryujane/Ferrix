@@ -101,6 +101,7 @@
     "compact": "Compact",
     "copy": "Copy value",
     "wrap": "Word wrap",
+    "lineNumbers": "Line numbers",
     "lines": "%{count} lines",
     "valueEditor": "Key value editor",
     "editValue": "Edit value",

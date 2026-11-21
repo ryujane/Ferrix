@@ -101,6 +101,7 @@
     "compact": "压缩",
     "copy": "复制值",
     "wrap": "自动折行",
+    "lineNumbers": "行号",
     "lines": "%{count} 行",
     "valueEditor": "键值编辑器",
     "editValue": "编辑键值",

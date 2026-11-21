@@ -1,4 +1,4 @@
-import { computed, signal, Scroll, Text, token, View } from "nsh";
+import { computed, platform, signal, Scroll, Text, token, View } from "nsh";
 import { Editor, Input, type EditorDecoration, type EditorRef } from "nsh/base";
 import { Action } from "../../components/action";
 import { Icon } from "../../components/icon";
@@ -62,13 +62,18 @@ export function KeyInspector(props: {
 }) {
   const state = props.state,
     wrap = signal(false);
+  // AppKit's editor gutter adds substantial frame cost on long JSON scrolls.
+  const jsonLineNumbers = signal(platform.os !== "macos");
   const copyToClipboard = useClipboardCopy();
   let editor: EditorRef | undefined;
   const tab = state.active;
   const preview = () => tab()?.preview;
-  const format = () => preview()?.format ?? tab()?.format;
-  const value = () =>
-    tab()?.json?.query?.value ?? preview()?.value ?? tab()?.value ?? "";
+  // TTL refreshes replace the tab while leaving the editor document intact.
+  const format = computed(() => preview()?.format ?? tab()?.format);
+  const value = computed(
+    () => tab()?.json?.query?.value ?? preview()?.value ?? tab()?.value ?? "",
+  );
+  const validJson = computed(() => isJson(value()));
   const binary = () => preview()?.binary ?? tab()?.binary ?? false;
   const loading = () => !!tab()?.loading || !!preview()?.loading;
   const error = () => tab()?.error || preview()?.error;
@@ -184,7 +189,7 @@ export function KeyInspector(props: {
                 ((tab()?.info?.type === "json" ||
                   format() === "json" ||
                   valueDecodingNeedsJson(preview()?.decoding)) &&
-                  !isJson(value()))
+                  !validJson())
               }
               onPress={() => void state.save()}
             />
@@ -363,6 +368,15 @@ export function KeyInspector(props: {
               size={26}
               onPress={() => editor?.run("unfoldAll")}
             />
+            <If when={format() === "json"}>
+              <Action
+                testID="workspace-json-line-numbers"
+                label={w("lineNumbers")}
+                compact
+                selected={jsonLineNumbers()}
+                onPress={() => jsonLineNumbers.set(!jsonLineNumbers())}
+              />
+            </If>
             <IconButton
               label={w("wrap")}
               icon="wrap"
@@ -438,6 +452,7 @@ export function KeyInspector(props: {
               language={format() === "json" ? "json" : "text"}
               highlighting={false}
               decorations={decorations()}
+              lineNumbers={format() !== "json" || jsonLineNumbers()}
               folding={format() === "json"}
               foldRanges={folds()}
               fontFamily={fonts.mono}
@@ -469,12 +484,12 @@ export function KeyInspector(props: {
             <View class="flex-1" />
             <Text
               testID="workspace-value-status"
-              class={`text-(--text-size-10) ${format() === "json" && !isJson(value()) ? "text-destructive" : "text-success"}`}
+              class={`text-(--text-size-10) ${format() === "json" && !validJson() ? "text-destructive" : "text-success"}`}
             >
               {loading()
                 ? w("loading")
                 : format() === "json"
-                  ? w(isJson(value()) ? "validJson" : "invalidJson")
+                  ? w(validJson() ? "validJson" : "invalidJson")
                   : w(editable() ? "editable" : "readOnly")}
             </Text>
           </View>
