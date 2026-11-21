@@ -33,9 +33,6 @@ have their own module alongside it. Data modules and generic controls do not
 import pages; pages do not import another page's private implementation. Keep
 domain-specific helpers with their owner instead of collecting them in `utils/`.
 
-The earlier example workspace in `ui/app.tsx` and `ui/model.ts` is not mounted by
-the entry point. It uses the same `src/components/`, fonts and assets; its
-example-specific `TypeBadge` stays in `ui/type-badge.tsx`.
 Connection configurations, groups and tags use Rust-owned SQLite in the host's
 datadir. Live Sessions belong to the app-level controller and survive page
 changes; view-local drafts and filters belong to their components. See
@@ -103,13 +100,6 @@ and detail-tab flows. Monitoring never directly switches the shared Session.
 
 `Version.getVersion()` reports the Rust package version from
 `Cargo.toml`; `nsh.json` separately describes the application package.
-
-The earlier `ui/app.tsx` owns its example window composition directly. Its component-local state in
-`ui/model.ts` currently supplies explicit example data. NSH's native
-`Tree`, `Editor` and `ResizablePanelGroup` own keyboard behavior, virtualization,
-folding and resizing. Theme changes use the native appearance and `theme.json`
-tokens without rebuilding the state. See [WINDOW.md](WINDOW.md) for the current
-window boundary and the future typed-Redis adapter seam.
 
 RedisJSON uses `src/native/redis/json.rs` on the existing Session lanes. Key
 details and metadata normalize the module type `ReJSON-RL` to `json`; Key Scans
@@ -333,8 +323,7 @@ there is a concrete persistence use case.
 TSX owns application composition, views, interaction and presentation state.
 View components may import native exports directly. `src/app.tsx` composes pages
 and shared controls; pages consume shared data, controls and helpers. Keep
-page-specific drafts and filters within the page. The earlier example workspace
-keeps its own state in `ui/model.ts`.
+page-specific drafts and filters within the page.
 
 NSH generates the native TypeScript declarations from Rust signatures and doc
 comments. Keep interface documentation on the Rust exports and regenerate it with
@@ -378,8 +367,6 @@ UI/platform ordering.
 - `nsh check` checks the crate, generates native declarations and type-checks TSX.
 - `nsh test` runs Rust tests and discovers `*.test.tsx` / `*.test.ts` files
   importing `nsh/test`. Place new tests beside the feature they exercise.
-- `app.test.tsx` exercises the root workspace, native editor folding/validation,
-  theme changes, key search, tab state and the local example console.
 - `tests/redis-session.rs` owns ephemeral authenticated Redis fixtures and bundles
   the TS public API acceptance app against the real native registry. It requires
   Redis 6+ (`REDIS_SERVER` or PATH), never an existing Redis service.
@@ -389,8 +376,8 @@ UI/platform ordering.
   integrations or preparing their releases.
 
 `.nsh/` is generated and ignored by Git. Its declarations, runners and packages
-are outputs of the nsh commands. Source changes belong in `ui/`, `src/`, the root
-entry points and configuration.
+are outputs of the nsh commands. Source changes belong in `src/`, the root entry
+points and configuration.
 
 ## References
 

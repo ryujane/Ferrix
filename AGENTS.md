@@ -19,7 +19,7 @@ The product targets macOS, Windows and Linux desktops. Local platform verificati
 
 Two halves in one repo, wired by `nsh.json` (`"rust": "."` points at the crate root):
 
-- **UI (TSX)**: root `app.tsx` mounts `src/app.tsx`. Shared controls live in `src/components/`, pages and their private code in `src/pages/<page>/`, shared data/state in `src/data/`, and reusable helpers in `src/utils/`. App-wide modules such as `i18n.ts` and `fonts.ts` live at the `src/` root. Shared modules do not import pages; page-local state stays with its page. The earlier example workspace remains under `ui/` and consumes the same shared controls and assets. Reactivity (`signal`, resources) comes from `"nsh"`; `jsxImportSource` is `"nsh"`. The component/style surface lives in `.nsh/types/nsh/types.d.ts` and `index.d.ts`.
+- **UI (TSX)**: root `app.tsx` mounts `src/app.tsx`. Shared controls live in `src/components/`, pages and their private code in `src/pages/<page>/`, shared data/state in `src/data/`, and reusable helpers in `src/utils/`. App-wide modules such as `i18n.ts` and `fonts.ts` live at the `src/` root. Shared modules do not import pages; page-local state stays with its page. Reactivity (`signal`, resources) comes from `"nsh"`; `jsxImportSource` is `"nsh"`. The component/style surface lives in `.nsh/types/nsh/types.d.ts` and `index.d.ts`.
 - **Native (Rust)**: the crate `nsh-app-ferrix`. Keep `#[native_module("ferrix/native")]` in `src/lib.rs` at the crate root; implementations live in `src/native/`. The registry exposes exports three ways:
   - `registry.register::<T>()` — components (`#[component]`, with `Props`/`Event` derives; events surface as `onXxx` props)
   - `registry.module::<T>()` — modules (`#[module]`: namespaced functions, e.g. `Format.times(3)`)
