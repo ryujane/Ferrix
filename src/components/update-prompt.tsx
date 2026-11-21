@@ -1,4 +1,4 @@
-import { Text, View } from "nsh";
+import { Scroll, Text, View } from "nsh";
 import type { AppUpdates } from "../data/app-updates";
 import { t } from "../i18n";
 import { Action } from "./action";
@@ -33,16 +33,14 @@ export function UpdateStatus(props: { updates: AppUpdates; testID?: string }) {
   );
 }
 
-export function UpdateNotes(props: { updates: AppUpdates; compact?: boolean }) {
+export function UpdateNotes(props: { updates: AppUpdates }) {
   const notes = () => {
     const value = props.updates.state();
     return "update" in value ? value.update.notes?.slice(0, 2000) : undefined;
   };
   return (
     <If when={notes()}>
-      <Text
-        class={`text-(--text-size-12) text-muted-foreground leading-(--line-height-21) ${props.compact ? "line-clamp-4" : ""}`}
-      >
+      <Text class="text-(--text-size-12) text-muted-foreground leading-(--line-height-21)">
         {notes()}
       </Text>
     </If>
@@ -96,14 +94,17 @@ export function UpdatePrompt(props: { updates: AppUpdates }) {
       id="startup-update"
       title={t("updates.title")}
       width={540}
-      height={284}
-      headerHeight={68}
+      height="auto"
+      maxHeight={480}
+      headerHeight={56}
       onClose={props.updates.dismissPrompt}
     >
-      <View class="flex-1 gap-3 px-8 pb-5">
-        <UpdateStatus updates={props.updates} testID="startup-update-status" />
-        <UpdateNotes updates={props.updates} compact />
-        <View class="flex-1 flex-row flex-wrap justify-end items-end gap-2">
+      <View class="min-h-0 shrink gap-3 px-8 pb-5">
+        <Scroll testID="startup-update-copy" class="min-h-0 shrink" contentClass="gap-3">
+          <UpdateStatus updates={props.updates} testID="startup-update-status" />
+          <UpdateNotes updates={props.updates} />
+        </Scroll>
+        <View class="shrink-0 flex-row flex-wrap justify-end items-center gap-2">
           <Action
             testID="startup-update-later"
             label={t("updates.later")}
