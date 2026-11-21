@@ -11,6 +11,7 @@ export function safeError(cause: unknown): string {
     MASTER_PASSWORD_INVALID: "masterPasswordInvalid",
     MASTER_PASSWORD_MISMATCH: "masterPasswordMismatch",
     KEYCHAIN_UNAVAILABLE: "keychainUnavailable",
+    NATIVE_VAULT_IO: "nativeVaultIo",
     CREDENTIAL_MISSING: "credentialsMissing",
     CREDENTIAL_INVALID: "credentialsInvalid",
     STORE_CONFLICT: "conflict",

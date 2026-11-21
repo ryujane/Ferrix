@@ -1,11 +1,7 @@
 import { List, Text, View } from "nsh";
 import { Button, Input, Select } from "nsh/base";
-import type {
-  Config,
-  SavedConnection,
-} from "../../data/connections/connection-model";
+import type { SavedConnection } from "../../data/connections/connection-model";
 import { address, endpoints } from "../../data/connections/connection-model";
-import { openConnection } from "../../data/connections/connection-client";
 import { Action } from "../../components/action";
 import { useClipboardCopy } from "../../utils/clipboard";
 import { Modal } from "./hub-controls";
@@ -21,11 +17,11 @@ import {
 
 export function SlowlogDialog(props: {
   connection: SavedConnection;
-  openSession?: (config: Config) => Promise<SlowlogSession>;
+  openSession: (connectionId: string) => Promise<SlowlogSession>;
   onClose: () => void;
 }) {
   const state = createSlowlogState(() =>
-    (props.openSession ?? openConnection)(props.connection.config),
+    props.openSession(props.connection.id),
   );
   const copy = useClipboardCopy();
   void state.refresh();

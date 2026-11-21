@@ -6,19 +6,20 @@ from the general Preferences Save & apply, cancel, reset and JSON export.
 
 ## Backends and files
 
-- **Native Keychain** uses macOS Keychain, Windows Credential Manager or Linux
-  Secret Service, as before.
+- **Native Keychain** on macOS stores one randomly generated key per Ferrix
+  data directory in the login Keychain as “Ferrix Credential Vault”. Each
+  credential record in `${dataDir}/native-credentials.sqlite3` is independently
+  authenticated and encrypted with AES-256-GCM. Windows uses Credential Manager
+  and Linux uses Secret Service.
 - **KeePass** uses `${dataDir}/credentials.kdbx`. The file is standard KDBX 4.1
   with AES-256 outer encryption, protected entry fields and Argon2id (64 MiB,
   three iterations, two lanes). It can be read by independent KeePass readers.
 
 The selected provider is persisted in `credential_settings` in
 `${dataDir}/app.sqlite3`, schema version 3. Connection metadata remains
-in SQLite. Passwords and private keys stay in the selected credential store;
-SQLite contains opaque references. No master password is written to SQLite,
-NSH Storage, a config export or the native keychain. It is retained only in
-zeroed native process memory while unlocked. The UI clears password inputs
-when an action finishes or its view closes.
+in the application SQLite database alongside opaque references. The KeePass
+master password stays in zeroed native process memory while unlocked. The UI
+clears password inputs when an action finishes or its view closes.
 
 Creating a KeePass file requires matching master passwords of at least eight
 characters. Existing files require their current master password; they are never
@@ -31,6 +32,12 @@ upstream. Generated KDBX 4.1 files are verified with the independent PyKeePass
 reader, including protected credential contents and encryption/KDF identifiers.
 
 ## Unlocking and password changes
+
+On macOS, Ferrix reads the login Keychain key on demand and keeps it in zeroed
+memory only for the current storage operation. Choose “Always Allow” for that
+item to authorize future reads by the same signed app. App releases need a
+stable signing identity for macOS to reuse that authorization across updates.
+Loading the connection list or settings does not request Keychain access.
 
 KeePass starts locked after a process restart. Unlock it in credential settings
 before creating or testing new connections. Locking drops the cached master
@@ -46,6 +53,12 @@ A forgotten master password cannot be recovered by Ferrix.
 
 ## Migration and failure behavior
 
+Existing macOS credentials are upgraded one connection at a time on first use.
+macOS can still prompt for the old Keychain entries while reading them. The new
+record is written and verified before the connection reference is switched.
+Legacy cleanup is retried during a later save. Older Ferrix builds cannot open
+the upgraded references.
+
 Switching copies all referenced credentials to the target, persists them and
 reads them back, then publishes the new provider in a SQLite transaction with
 an expected revision. Source credentials are retired after commit. If either
@@ -59,9 +72,11 @@ check rejects external changes before overwriting. A datadir lock serializes
 connection saves, backend switches, locking and password changes across Ferrix
 processes. No plaintext temporary vault or plaintext backup is created.
 
-Back up both the SQLite configuration and its matching KDBX file when using
-KeePass. File-system backups made before the earlier plaintext migration are
-outside the live-database cleanup.
+For macOS Native Keychain, back up `app.sqlite3`, `native-credentials.sqlite3`,
+and the matching login Keychain item together. Losing that item prevents
+decryption of the corresponding vault. For KeePass, back up the SQLite
+configuration and its matching KDBX file. File-system backups made before the
+earlier plaintext migration are outside the live-database cleanup.
 
 ## Implementation and validation
 

@@ -1,8 +1,6 @@
 //! Credential settings are independent from exported preference documents.
 use super::{
-    app_store as store,
-    connection_credentials::NativeVault,
-    credential_backends as backends,
+    app_store as store, credential_backends as backends,
     keepass_vault::{self, KeePassVault},
 };
 use nsh_core::prelude::*;
@@ -18,7 +16,7 @@ struct Status {
     file_path: String,
 }
 fn status(path: &Path) -> Result<String, JsError> {
-    let db = store::open(path, &NativeVault)?;
+    let db = store::open_metadata(path)?;
     let datadir = path.parent().unwrap();
     serde_json::to_string(&Status {
         provider: backends::provider(&db)?,
@@ -44,14 +42,15 @@ impl CredentialSettings {
         sys: System,
     ) -> Result<Later<String>, JsError> {
         store::task(sys, move |path| {
-            let mut db = store::open(path, &NativeVault)?;
+            let native = backends::native(path);
+            let mut db = store::open(path, native.as_ref())?;
             let datadir = path.parent().unwrap();
             let target = KeePassVault::create_or_unlock(datadir, master_password, confirmation)?;
             if backends::provider(&db)? != "keepass" {
-                store::migrate_provider(&mut db, &NativeVault, &target)?;
+                store::migrate_provider(&mut db, native.as_ref(), &target)?;
             }
             let _ = store::collect_garbage(&mut db, &target);
-            let _ = store::cleanup_native_after_keepass(&mut db, &target);
+            let _ = store::cleanup_native_after_keepass(&mut db, &target, native.as_ref());
             status(path)
         })
     }
@@ -61,7 +60,8 @@ impl CredentialSettings {
         sys: System,
     ) -> Result<Later<String>, JsError> {
         store::task(sys, move |path| {
-            let mut db = store::open(path, &NativeVault)?;
+            let native = backends::native(path);
+            let mut db = store::open(path, native.as_ref())?;
             let datadir = path.parent().unwrap();
             if backends::provider(&db)? == "keepass" {
                 let source = if let Some(master) = master_password {
@@ -69,7 +69,7 @@ impl CredentialSettings {
                 } else {
                     KeePassVault::cached(datadir)?
                 };
-                store::migrate_provider(&mut db, &source, &NativeVault)?;
+                store::migrate_provider(&mut db, &source, native.as_ref())?;
                 keepass_vault::lock(datadir);
             }
             status(path)
@@ -78,16 +78,16 @@ impl CredentialSettings {
     /// Unlock only for this process; the password is not saved to disk or the OS store.
     pub fn unlock(master_password: String, sys: System) -> Result<Later<String>, JsError> {
         store::task(sys, move |path| {
-            let mut db = store::open(path, &NativeVault)?;
+            let native = backends::native(path);
+            let mut db = store::open(path, native.as_ref())?;
             let vault = KeePassVault::unlock(path.parent().unwrap(), master_password)?;
-            let _ = store::cleanup_native_after_keepass(&mut db, &vault);
+            let _ = store::cleanup_native_after_keepass(&mut db, &vault, native.as_ref());
             status(path)
         })
     }
     /// Drop the cached master password. Established Redis Sessions are independent.
     pub fn lock(sys: System) -> Result<Later<String>, JsError> {
         store::task(sys, move |path| {
-            let _ = store::open(path, &NativeVault)?;
             keepass_vault::lock(path.parent().unwrap());
             status(path)
         })
@@ -100,7 +100,7 @@ impl CredentialSettings {
         sys: System,
     ) -> Result<Later<String>, JsError> {
         store::task(sys, move |path| {
-            let db = store::open(path, &NativeVault)?;
+            let db = store::open_metadata(path)?;
             if backends::provider(&db)? != "keepass" {
                 return Err(keepass_vault::error(
                     "KEEPASS_NOT_ACTIVE",
@@ -120,7 +120,7 @@ impl CredentialSettings {
     pub fn require_unlocked(sys: System) -> Result<Later<String>, JsError> {
         store::task(sys, move |path| {
             let result = status(path)?;
-            let db = store::open(path, &NativeVault)?;
+            let db = store::open_metadata(path)?;
             if backends::provider(&db)? == "keepass"
                 && !keepass_vault::is_unlocked(path.parent().unwrap())
             {

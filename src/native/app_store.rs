@@ -1,5 +1,6 @@
 //! Application persistence: SQLite lifecycle, schema, configurations and credential settings.
 //! SQLite is confined to the host's datadir.
+#[cfg(test)]
 use super::connection_credentials::NativeVault;
 use super::connection_credentials::{CredentialRef, Secrets, Vault};
 use nsh_core::prelude::*;
@@ -56,26 +57,48 @@ pub struct AppStore;
 
 #[module]
 impl AppStore {
-    /// Read saved configurations from `${dataDir}/app.sqlite3`.
+    /// Read saved configurations without loading their credentials.
     pub fn load_connections(sys: System) -> Result<Later<String>, JsError> {
         task(sys, |path| {
+            // Keep the locked KeePass state visible in the Hub.
+            super::credential_backends::selected(path)?;
+            let mut db = open_metadata(path)?;
+            serde_json::to_string(&read_list(&mut db)?).map_err(store_error)
+        })
+    }
+    /// Load the credentials of one saved connection at the given list revision.
+    pub fn load_connection(
+        id: String,
+        revision: i64,
+        sys: System,
+    ) -> Result<Later<String>, JsError> {
+        task(sys, move |path| {
             let vault = super::credential_backends::selected(path)?;
             let mut db = open(path, vault.as_ref())?;
-            let result = read(&mut db, vault.as_ref())?;
-            let _ = cleanup_native_after_keepass(&mut db, vault.as_ref());
-            Ok(result)
+            let connection = read_connection(&mut db, &id, revision, vault.as_ref())?;
+            serde_json::to_string(&connection).map_err(store_error)
         })
     }
     /// Atomically save the document if its revision still matches the database.
-    /// A stale window fails with STORE_CONFLICT instead of overwriting newer data.
-    pub fn save_connections(document: String, sys: System) -> Result<Later<String>, JsError> {
+    /// Only the connection named by `credential_id` can replace its credentials.
+    pub fn save_connections(
+        document: String,
+        credential_id: Option<String>,
+        sys: System,
+    ) -> Result<Later<String>, JsError> {
         if document.len() > 16 * 1024 * 1024 {
             return Err(invalid());
         }
         task(sys, move |path| {
             let doc: Document = serde_json::from_str(&document).map_err(|_| invalid())?;
             let vault = super::credential_backends::selected(path)?;
-            save(&mut open(path, vault.as_ref())?, doc, vault.as_ref())
+            let saved = persist(
+                &mut open(path, vault.as_ref())?,
+                doc,
+                vault.as_ref(),
+                CredentialChanges::Selected(credential_id.as_deref()),
+            )?;
+            serde_json::to_string(&saved).map_err(store_error)
         })
     }
 }
@@ -123,6 +146,14 @@ const CREDENTIAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS credential_gc (refer
     INSERT OR IGNORE INTO credential_settings VALUES(1,'native');";
 
 pub(super) fn open(path: &Path, vault: &dyn Vault) -> Result<Connection, JsError> {
+    open_database(path, Some(vault))
+}
+
+pub(super) fn open_metadata(path: &Path) -> Result<Connection, JsError> {
+    open_database(path, None)
+}
+
+fn open_database(path: &Path, migration_vault: Option<&dyn Vault>) -> Result<Connection, JsError> {
     let parent = path.parent().ok_or_else(invalid)?;
     std::fs::create_dir_all(parent).map_err(store_error)?;
     let mut options = std::fs::OpenOptions::new();
@@ -176,8 +207,10 @@ pub(super) fn open(path: &Path, vault: &dyn Vault) -> Result<Connection, JsError
         }
         tx.execute_batch(CREDENTIAL_SCHEMA).map_err(store_error)?;
         tx.commit().map_err(store_error)?;
-        let document = snapshot(&db)?;
-        persist(&mut db, document, vault, true)?;
+        if let Some(vault) = migration_vault {
+            let document = snapshot(&db)?;
+            persist(&mut db, document, vault, CredentialChanges::Migration)?;
+        }
     }
     if version == 2 {
         let tx = db
@@ -200,33 +233,133 @@ pub(super) fn open(path: &Path, vault: &dyn Vault) -> Result<Connection, JsError
         // Retried on every open if interrupted: remove legacy freelist/page and journal remnants.
         db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; VACUUM; UPDATE credential_meta SET needs_scrub=0 WHERE id=1;").map_err(store_error)?;
     }
-    // Cleanup is retryable. A locked keychain never undoes a committed configuration save.
-    if super::credential_backends::provider(&db)? == vault.provider() {
-        let _ = collect_garbage(&mut db, vault);
-    }
     Ok(db)
 }
 
-/// Read while holding a SQLite read transaction until credential hydration finishes.
-/// Writers cannot retire this generation until the reader releases its snapshot.
-fn read(db: &mut Connection, vault: &dyn Vault) -> Result<String, JsError> {
+fn verify_redacted(connection: &mut SavedConnection) -> Result<(), JsError> {
+    if !Secrets::take(&mut connection.config)?.is_empty() {
+        return Err(failure(
+            "CREDENTIAL_INVALID",
+            "Unexpected plaintext credentials in the connection database",
+        ));
+    }
+    Ok(())
+}
+
+fn read_list(db: &mut Connection) -> Result<Document, JsError> {
     let tx = db.transaction().map_err(store_error)?;
+    let legacy = tx
+        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+        .map_err(store_error)?
+        == 1;
     let mut document = snapshot(&tx)?;
     for connection in &mut document.connections {
-        if !Secrets::take(&mut connection.config)?.is_empty() {
-            return Err(failure(
-                "CREDENTIAL_INVALID",
-                "Unexpected plaintext credentials in the connection database",
-            ));
-        }
-        if let Some(reference) = &connection.credential_ref {
-            let reference = CredentialRef::parse(reference)?;
-            Secrets::decode(&vault.get(&reference)?)?.restore(&mut connection.config)?;
+        if legacy {
+            // Expose the public fields while deferring the legacy migration.
+            Secrets::take(&mut connection.config)?;
+        } else {
+            verify_redacted(connection)?;
         }
     }
+    tx.commit().map_err(store_error)?;
+    Ok(document)
+}
+
+fn hydrate(
+    connection: &mut SavedConnection,
+    vault: &dyn Vault,
+) -> Result<Option<(CredentialRef, Zeroizing<Vec<u8>>)>, JsError> {
+    verify_redacted(connection)?;
+    if let Some(reference) = &connection.credential_ref {
+        let reference = CredentialRef::parse(reference)?;
+        let bytes = vault.get(&reference)?;
+        Secrets::decode(&bytes)?.restore(&mut connection.config)?;
+        if vault.should_upgrade(&reference) {
+            return Ok(Some((reference, bytes)));
+        }
+    }
+    Ok(None)
+}
+
+fn read_connection(
+    db: &mut Connection,
+    id: &str,
+    expected_revision: i64,
+    vault: &dyn Vault,
+) -> Result<SavedConnection, JsError> {
+    // Writers cannot retire this credential generation during the read.
+    let tx = db.transaction().map_err(store_error)?;
+    let document = snapshot(&tx)?;
+    check_revision(document.revision, expected_revision)?;
+    let mut connection = document
+        .connections
+        .into_iter()
+        .find(|item| item.id == id)
+        .ok_or_else(invalid)?;
+    let upgrade = hydrate(&mut connection, vault)?;
     vault.flush()?;
     tx.commit().map_err(store_error)?;
-    serde_json::to_string(&document).map_err(store_error)
+    if let Some((reference, bytes)) = upgrade {
+        connection.credential_ref =
+            Some(upgrade_credential(db, &connection.id, vault, &reference, &bytes)?.encode());
+    }
+    Ok(connection)
+}
+
+fn upgrade_credential(
+    db: &mut Connection,
+    id: &str,
+    vault: &dyn Vault,
+    previous: &CredentialRef,
+    bytes: &[u8],
+) -> Result<CredentialRef, JsError> {
+    let reference = vault.new_reference(bytes)?;
+    let encoded = reference.encode();
+    let previous = previous.encode();
+    db.execute(
+        "INSERT INTO credential_gc(reference,not_before,provider) VALUES(?1,unixepoch()+86400,?2)",
+        params![encoded, vault.provider()],
+    )
+    .map_err(store_error)?;
+    let result = (|| {
+        vault.put(&reference, bytes)?;
+        vault.flush()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        verify_credential(vault, &reference, bytes)?;
+        if super::credential_backends::provider(&tx)? != vault.provider()
+            || tx
+                .execute(
+                    "UPDATE connections SET credential_ref=?1 WHERE id=?2 AND credential_ref=?3",
+                    params![encoded, id, previous],
+                )
+                .map_err(store_error)?
+                != 1
+        {
+            return Err(failure(
+                "STORE_CONFLICT",
+                "Credentials changed during migration",
+            ));
+        }
+        tx.execute(
+            "DELETE FROM credential_gc WHERE reference=?1 AND provider=?2",
+            params![encoded, vault.provider()],
+        )
+        .map_err(store_error)?;
+        // Retire the legacy item during an explicit save, keeping reads free of cleanup prompts.
+        tx.execute("INSERT INTO credential_gc(reference,not_before,provider) VALUES(?1,0,?2) ON CONFLICT(reference,provider) DO UPDATE SET not_before=0", params![previous,vault.provider()]).map_err(store_error)?;
+        tx.commit().map_err(store_error)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = db.execute(
+            "UPDATE credential_gc SET not_before=0 WHERE reference=?1 AND provider=?2",
+            params![encoded, vault.provider()],
+        );
+    }
+    result?;
+    Ok(reference)
 }
 fn snapshot(db: &Connection) -> Result<Document, JsError> {
     let revision = db
@@ -291,18 +424,36 @@ fn snapshot(db: &Connection) -> Result<Document, JsError> {
     })
 }
 
+#[cfg(test)]
 fn save(db: &mut Connection, document: Document, vault: &dyn Vault) -> Result<String, JsError> {
-    let document = persist(db, document, vault, false)?;
+    let document = persist(db, document, vault, CredentialChanges::All)?;
     serde_json::to_string(&document).map_err(store_error)
 }
+
+#[derive(Clone, Copy)]
+enum CredentialChanges<'a> {
+    Migration,
+    Selected(Option<&'a str>),
+    #[cfg(test)]
+    All,
+}
+
 fn persist(
     db: &mut Connection,
     mut document: Document,
     vault: &dyn Vault,
-    migration: bool,
+    changes: CredentialChanges<'_>,
 ) -> Result<Document, JsError> {
     validate(&document)?;
-    let mut stored = document.clone();
+    let migration = matches!(changes, CredentialChanges::Migration);
+    if let CredentialChanges::Selected(Some(id)) = changes
+        && !document
+            .connections
+            .iter()
+            .any(|connection| connection.id == id)
+    {
+        return Err(invalid());
+    }
     let mut prepared: Vec<(CredentialRef, Zeroizing<Vec<u8>>)> = Vec::new();
     {
         let tx = db
@@ -325,21 +476,35 @@ fn persist(
             .iter()
             .map(|c| (&c.id, &c.credential_ref))
             .collect();
-        for connection in &mut stored.connections {
+        for connection in &mut document.connections {
             let secrets = Secrets::take(&mut connection.config)?;
+            let old = references
+                .get(&connection.id)
+                .and_then(|reference| reference.as_ref());
+            if let CredentialChanges::Selected(id) = changes
+                && id != Some(connection.id.as_str())
+            {
+                if !secrets.is_empty() {
+                    return Err(invalid());
+                }
+                connection.credential_ref = old.cloned();
+                continue;
+            }
             connection.credential_ref = None;
             if secrets.is_empty() {
                 continue;
             }
-            if let Some(Some(old)) = references.get(&connection.id) {
+            if let Some(old) = old {
                 let reference = CredentialRef::parse(old)?;
-                if secrets == Secrets::decode(&vault.get(&reference)?)? {
+                if !vault.should_upgrade(&reference)
+                    && secrets == Secrets::decode(&vault.get(&reference)?)?
+                {
                     connection.credential_ref = Some(old.to_string());
                     continue;
                 }
             }
             let bytes = secrets.encode()?;
-            let reference = CredentialRef::new(&bytes)?;
+            let reference = vault.new_reference(&bytes)?;
             connection.credential_ref = Some(reference.encode());
             // Durable intent precedes external I/O. Crash leftovers are collected after a lease.
             tx.execute(
@@ -351,7 +516,7 @@ fn persist(
         }
         tx.commit().map_err(store_error)?;
     }
-    let result = (|| {
+    let result = (|| -> Result<(), JsError> {
         for (reference, bytes) in &prepared {
             vault.put(reference, bytes)?;
         }
@@ -363,15 +528,10 @@ fn persist(
         check_revision(previous.revision, document.revision)?;
         // Protect against expired preparation leases or external deletion before committing a ref.
         for (reference, bytes) in &prepared {
-            if vault.get(reference)?.as_slice() != bytes.as_slice() {
-                return Err(failure(
-                    "CREDENTIAL_INVALID",
-                    "System credential verification failed",
-                ));
-            }
+            verify_credential(vault, reference, bytes)?;
         }
-        write_document(&tx, &stored)?;
-        let retained: HashSet<_> = stored
+        write_document(&tx, &document)?;
+        let retained: HashSet<_> = document
             .connections
             .iter()
             .filter_map(|c| c.credential_ref.as_ref())
@@ -392,15 +552,16 @@ fn persist(
             )
             .map_err(store_error)?;
         }
-        document.revision = document.revision.checked_add(1).ok_or_else(invalid)?;
-        tx.execute(
-            "UPDATE store_meta SET revision=? WHERE id=1",
-            [document.revision],
-        )
-        .map_err(store_error)?;
         if migration {
             tx.execute_batch(
                 "UPDATE credential_meta SET needs_scrub=1 WHERE id=1; PRAGMA user_version=3;",
+            )
+            .map_err(store_error)?;
+        } else {
+            document.revision = document.revision.checked_add(1).ok_or_else(invalid)?;
+            tx.execute(
+                "UPDATE store_meta SET revision=? WHERE id=1",
+                [document.revision],
             )
             .map_err(store_error)?;
         }
@@ -419,6 +580,19 @@ fn persist(
     let _ = collect_garbage(db, vault);
     result?;
     Ok(document)
+}
+fn verify_credential(
+    vault: &dyn Vault,
+    reference: &CredentialRef,
+    bytes: &[u8],
+) -> Result<(), JsError> {
+    if vault.get(reference)?.as_slice() != bytes {
+        return Err(failure(
+            "CREDENTIAL_INVALID",
+            "Credential verification failed",
+        ));
+    }
+    Ok(())
 }
 fn check_revision(actual: i64, expected: i64) -> Result<(), JsError> {
     if actual != expected {
@@ -512,6 +686,16 @@ fn store_error(_: impl std::fmt::Display) -> JsError {
 }
 
 #[cfg(test)]
+fn read(db: &mut Connection, vault: &dyn Vault) -> Result<String, JsError> {
+    let mut document = read_list(db)?;
+    for connection in &mut document.connections {
+        hydrate(connection, vault)?;
+    }
+    vault.flush()?;
+    serde_json::to_string(&document).map_err(store_error)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
@@ -522,11 +706,13 @@ mod tests {
         fail_put: Cell<bool>,
         fail_get: Cell<bool>,
         fail_delete: Cell<bool>,
+        reads: RefCell<Vec<String>>,
         writes: Cell<usize>,
         after_put: RefCell<Option<Box<dyn FnOnce()>>>,
     }
     impl Vault for TestVault {
         fn get(&self, reference: &CredentialRef) -> Result<Zeroizing<Vec<u8>>, JsError> {
+            self.reads.borrow_mut().push(reference.encode());
             if self.fail_get.get() {
                 return Err(failure("KEYCHAIN_UNAVAILABLE", "Locked test vault"));
             }
@@ -615,6 +801,57 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn listing_and_metadata_edits_skip_credentials_and_open_reads_only_the_selected_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let vault = TestVault::default();
+        let mut db = open(&path, &vault).unwrap();
+        let mut initial = document();
+        let mut other = initial.connections[0].clone();
+        other.id = "another".into();
+        other.name = "Other cache".into();
+        other.config["password"] = "other-secret".into();
+        initial.connections.push(other);
+        save(&mut db, initial, &vault).unwrap();
+
+        vault.reads.borrow_mut().clear();
+        vault.fail_get.set(true);
+        let mut list = read_list(&mut open_metadata(&path).unwrap()).unwrap();
+        assert_eq!(list.connections.len(), 2);
+        assert_eq!(list.connections[0].config["password"], "");
+        list.connections[0].favorite = false;
+        let list = persist(&mut db, list, &vault, CredentialChanges::Selected(None)).unwrap();
+        assert!(vault.reads.borrow().is_empty());
+        assert_eq!(vault.writes.get(), 2);
+
+        assert!(read_connection(&mut db, "c", list.revision - 1, &vault).is_err());
+        assert!(vault.reads.borrow().is_empty());
+        assert!(read_connection(&mut db, "c", list.revision, &vault).is_err());
+        assert_eq!(
+            vault.reads.borrow().as_slice(),
+            [list.connections[0].credential_ref.clone().unwrap()]
+        );
+
+        vault.fail_get.set(false);
+        let selected = read_connection(&mut db, "c", list.revision, &vault).unwrap();
+        assert_eq!(selected.config["password"], "unique-redis-secret");
+        let saved = persist(
+            &mut db,
+            list,
+            &vault,
+            CredentialChanges::Selected(Some("c")),
+        )
+        .unwrap();
+        assert!(saved.connections[0].credential_ref.is_none());
+        assert_eq!(
+            read_connection(&mut db, "another", saved.revision, &vault)
+                .unwrap()
+                .config["password"],
+            "other-secret"
+        );
     }
     #[test]
     fn organization_edits_reuse_credentials_and_delete_retires_them() {
@@ -723,6 +960,9 @@ mod tests {
         vault.fail_delete.set(false);
         drop(db);
         let mut db = open(&path, &vault).unwrap();
+        assert_eq!(vault.values.borrow().len(), 1);
+        let list = read_list(&mut db).unwrap();
+        save(&mut db, list, &vault).unwrap();
         assert!(vault.values.borrow().is_empty());
         let bytes = Zeroizing::new(vec![1, 2, 3]);
         let pending = CredentialRef::new(&bytes).unwrap();
@@ -808,6 +1048,105 @@ mod tests {
         drop(db);
         assert_no_plaintext(&path);
         assert!(!path.with_file_name("app.sqlite3-wal").exists());
+    }
+    #[test]
+    fn metadata_open_defers_legacy_credentials_until_requested() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        legacy(&path);
+        let vault = TestVault::default();
+        let mut listing = open_metadata(&path).unwrap();
+        let list = read_list(&mut listing).unwrap();
+        assert_eq!(list.connections[0].config["password"], "");
+        assert_eq!(
+            listing
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            1
+        );
+        assert!(vault.values.borrow().is_empty());
+        drop(listing);
+
+        let mut db = open(&path, &vault).unwrap();
+        let loaded = read_connection(&mut db, "c", list.revision, &vault).unwrap();
+        assert_eq!(loaded.config["password"], "unique-redis-secret");
+        assert_no_plaintext(&path);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_credential_upgrades_only_the_selected_connection_after_verification() {
+        #[derive(Default)]
+        struct UpgradingVault {
+            items: TestVault,
+            reject_sealed: Cell<bool>,
+        }
+        impl Vault for UpgradingVault {
+            fn new_reference(&self, bytes: &[u8]) -> Result<CredentialRef, JsError> {
+                CredentialRef::sealed(bytes)
+            }
+            fn should_upgrade(&self, reference: &CredentialRef) -> bool {
+                !reference.is_sealed()
+            }
+            fn get(&self, reference: &CredentialRef) -> Result<Zeroizing<Vec<u8>>, JsError> {
+                if reference.is_sealed() && self.reject_sealed.get() {
+                    return Err(failure("CREDENTIAL_INVALID", "Test verification failure"));
+                }
+                self.items.get(reference)
+            }
+            fn put(&self, reference: &CredentialRef, bytes: &[u8]) -> Result<(), JsError> {
+                self.items.put(reference, bytes)
+            }
+            fn delete(&self, reference: &CredentialRef) -> Result<(), JsError> {
+                self.items.delete(reference)
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let vault = UpgradingVault::default();
+        let mut db = open(&path, &vault).unwrap();
+        let mut initial = document();
+        let mut other = initial.connections[0].clone();
+        other.id = "other".into();
+        other.name = "Other cache".into();
+        initial.connections.push(other);
+        save(&mut db, initial, &vault.items).unwrap();
+        let list = read_list(&mut db).unwrap();
+        let old = list.connections[0].credential_ref.as_deref().unwrap();
+        let other_ref = list.connections[1].credential_ref.as_deref().unwrap();
+        vault.items.reads.borrow_mut().clear();
+        vault.reject_sealed.set(true);
+
+        assert!(read_connection(&mut db, "c", list.revision, &vault).is_err());
+        let failed = read_list(&mut db).unwrap();
+        assert_eq!(failed.connections[0].credential_ref.as_deref(), Some(old));
+        assert!(vault.items.values.borrow().contains_key(old));
+        assert_eq!(vault.items.reads.borrow().as_slice(), [old]);
+
+        vault.reject_sealed.set(false);
+        let migrated = read_connection(&mut db, "c", list.revision, &vault).unwrap();
+        assert_eq!(migrated.config["password"], "unique-redis-secret");
+        let after = read_list(&mut db).unwrap();
+        let reference = after.connections[0].credential_ref.as_deref().unwrap();
+        assert!(reference.starts_with("v2:"));
+        assert_eq!(after.revision, list.revision);
+        assert_eq!(
+            after.connections[1].credential_ref.as_deref(),
+            Some(other_ref)
+        );
+        assert!(
+            !vault
+                .items
+                .reads
+                .borrow()
+                .iter()
+                .any(|entry| entry == other_ref)
+        );
+        collect_garbage(&mut db, &vault).unwrap();
+        assert!(!vault.items.values.borrow().contains_key(old));
+        assert!(vault.items.values.borrow().contains_key(reference));
+        assert_eq!(vault.items.values.borrow().len(), 2);
     }
     #[test]
     fn denied_migration_preserves_legacy_data_until_keychain_succeeds() {
@@ -928,7 +1267,7 @@ mod credential_regressions {
         let mut db = open(&path, &vault).unwrap();
         let previous = loaded(&mut db, &vault);
         let sanitized = snapshot(&db).unwrap();
-        persist(&mut db, sanitized, &vault, true).unwrap();
+        persist(&mut db, sanitized, &vault, CredentialChanges::Migration).unwrap();
         let current = loaded(&mut db, &vault);
         assert_eq!(current.revision, previous.revision);
         assert_eq!(
@@ -1029,20 +1368,24 @@ pub(super) fn migrate_provider(
         if super::credential_backends::provider(&tx)? != source.provider() {
             return Err(failure("STORE_CONFLICT", "Credential backend changed"));
         }
-        for reference in document
-            .connections
-            .iter()
-            .filter_map(|c| c.credential_ref.as_deref())
-        {
-            let reference = CredentialRef::parse(reference)?;
-            let bytes = source.get(&reference)?;
+        for connection in document.connections {
+            let Some(previous) = connection.credential_ref else {
+                continue;
+            };
+            let previous = CredentialRef::parse(&previous)?;
+            let bytes = source.get(&previous)?;
+            let reference = if target.should_upgrade(&previous) {
+                target.new_reference(&bytes)?
+            } else {
+                previous.clone()
+            };
             tx.execute("INSERT INTO credential_gc(reference,not_before,provider) VALUES(?1,unixepoch()+86400,?2) ON CONFLICT(reference,provider) DO UPDATE SET not_before=excluded.not_before",params![reference.encode(),target.provider()]).map_err(store_error)?;
-            prepared.push((reference, bytes));
+            prepared.push((connection.id, previous, reference, bytes));
         }
         tx.commit().map_err(store_error)?;
     }
     let result = (|| {
-        for (reference, bytes) in &prepared {
+        for (_, _, reference, bytes) in &prepared {
             target.put(reference, bytes)?;
         }
         target.flush()?;
@@ -1058,19 +1401,21 @@ pub(super) fn migrate_provider(
         if super::credential_backends::provider(&tx)? != source.provider() {
             return Err(failure("STORE_CONFLICT", "Credential backend changed"));
         }
-        for (reference, bytes) in &prepared {
-            if target.get(reference)?.as_slice() != bytes.as_slice() {
-                return Err(failure(
-                    "CREDENTIAL_INVALID",
-                    "Migrated credential verification failed",
-                ));
+        for (id, previous, reference, bytes) in &prepared {
+            verify_credential(target, reference, bytes)?;
+            if previous != reference {
+                tx.execute(
+                    "UPDATE connections SET credential_ref=?1 WHERE id=?2",
+                    params![reference.encode(), id],
+                )
+                .map_err(store_error)?;
             }
             tx.execute(
                 "DELETE FROM credential_gc WHERE reference=?1 AND provider=?2",
                 params![reference.encode(), target.provider()],
             )
             .map_err(store_error)?;
-            tx.execute("INSERT INTO credential_gc(reference,not_before,provider) VALUES(?1,0,?2) ON CONFLICT(reference,provider) DO UPDATE SET not_before=0",params![reference.encode(),source.provider()]).map_err(store_error)?;
+            tx.execute("INSERT INTO credential_gc(reference,not_before,provider) VALUES(?1,0,?2) ON CONFLICT(reference,provider) DO UPDATE SET not_before=0",params![previous.encode(),source.provider()]).map_err(store_error)?;
         }
         tx.execute(
             "UPDATE credential_settings SET provider=? WHERE id=1",
@@ -1083,7 +1428,7 @@ pub(super) fn migrate_provider(
         Ok(())
     })();
     if result.is_err() {
-        for (reference, _) in &prepared {
+        for (_, _, reference, _) in &prepared {
             let _ = db.execute(
                 "UPDATE credential_gc SET not_before=0 WHERE reference=?1 AND provider=?2",
                 params![reference.encode(), target.provider()],
@@ -1191,6 +1536,7 @@ mod keepass_tests {
 pub(super) fn cleanup_native_after_keepass(
     db: &mut Connection,
     vault: &dyn Vault,
+    native: &dyn Vault,
 ) -> Result<(), JsError> {
     if vault.provider() != "keepass" || super::credential_backends::provider(db)? != "keepass" {
         return Ok(());
@@ -1204,7 +1550,7 @@ pub(super) fn cleanup_native_after_keepass(
         let _ = Secrets::decode(&vault.get(&reference)?)?;
     }
     vault.flush()?;
-    collect_garbage(db, &NativeVault)
+    collect_garbage(db, native)
 }
 
 #[cfg(test)]

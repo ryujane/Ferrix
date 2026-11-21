@@ -1,5 +1,10 @@
-//! Platform credential storage. No file-based or in-memory production fallback.
+//! Credential references, secret serialization, and the per-entry system vault.
 use nsh_core::prelude::*;
+#[cfg(target_os = "macos")]
+use security_framework::{
+    item::{ItemClass, ItemSearchOptions},
+    os::macos::keychain::{SecKeychain, SecPreferencesDomain},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zeroize::{Zeroize, Zeroizing};
@@ -14,6 +19,7 @@ const MAX_CHUNKS: usize = 4096;
 pub(super) struct CredentialRef {
     id: uuid::Uuid,
     chunks: usize,
+    sealed: bool,
 }
 impl CredentialRef {
     pub(super) fn new(bytes: &[u8]) -> Result<Self, JsError> {
@@ -24,13 +30,30 @@ impl CredentialRef {
         Ok(Self {
             id: uuid::Uuid::new_v4(),
             chunks,
+            sealed: false,
         })
+    }
+    #[cfg(target_os = "macos")]
+    pub(super) fn sealed(bytes: &[u8]) -> Result<Self, JsError> {
+        let mut reference = Self::new(bytes)?;
+        reference.sealed = true;
+        Ok(reference)
+    }
+    #[cfg(target_os = "macos")]
+    pub(super) fn is_sealed(&self) -> bool {
+        self.sealed
+    }
+    #[cfg(target_os = "macos")]
+    pub(super) fn matches_length(&self, len: usize) -> bool {
+        self.chunks == len.div_ceil(CHUNK_BYTES)
     }
     pub(super) fn parse(value: &str) -> Result<Self, JsError> {
         let mut parts = value.split(':');
-        if parts.next() != Some("v1") {
-            return Err(invalid());
-        }
+        let sealed = match parts.next() {
+            Some("v1") => false,
+            Some("v2") => true,
+            _ => return Err(invalid()),
+        };
         let id = parts
             .next()
             .and_then(|id| uuid::Uuid::parse_str(id).ok())
@@ -43,10 +66,11 @@ impl CredentialRef {
         if parts.next().is_some() {
             return Err(invalid());
         }
-        Ok(Self { id, chunks })
+        Ok(Self { id, chunks, sealed })
     }
     pub(super) fn encode(&self) -> String {
-        format!("v1:{}:{}", self.id, self.chunks)
+        let version = if self.sealed { "v2" } else { "v1" };
+        format!("{version}:{}:{}", self.id, self.chunks)
     }
     fn account(&self, chunk: usize) -> String {
         format!("{}/{chunk}", self.id)
@@ -61,6 +85,12 @@ pub(super) trait Vault {
     /// Persist staged changes before SQLite is allowed to refer to them.
     fn flush(&self) -> Result<(), JsError> {
         Ok(())
+    }
+    fn new_reference(&self, bytes: &[u8]) -> Result<CredentialRef, JsError> {
+        CredentialRef::new(bytes)
+    }
+    fn should_upgrade(&self, _reference: &CredentialRef) -> bool {
+        false
     }
     fn get(&self, reference: &CredentialRef) -> Result<Zeroizing<Vec<u8>>, JsError>;
     fn put(&self, reference: &CredentialRef, bytes: &[u8]) -> Result<(), JsError>;
@@ -82,13 +112,35 @@ fn vault_error(error: keyring::Error) -> JsError {
         unavailable()
     }
 }
-fn unavailable() -> JsError {
+pub(super) fn unavailable() -> JsError {
     JsError::Error("Cannot access the system credential store. Unlock it and retry.".into())
         .with_code("KEYCHAIN_UNAVAILABLE")
 }
-fn invalid() -> JsError {
+pub(super) fn invalid() -> JsError {
     JsError::Error("Invalid saved credential reference or material".into())
         .with_code("CREDENTIAL_INVALID")
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn login_keychain() -> Result<SecKeychain, JsError> {
+    SecKeychain::default_for_domain(SecPreferencesDomain::User).map_err(|_| unavailable())
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn delete_login_item(service: &str, account: &str) -> Result<(), JsError> {
+    let login = login_keychain()?;
+    // Match metadata so that retiring a legacy entry does not request its secret again.
+    match ItemSearchOptions::new()
+        .class(ItemClass::generic_password())
+        .keychains(&[login])
+        .service(service)
+        .account(account)
+        .delete()
+    {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == -25300 => Ok(()), // errSecItemNotFound
+        Err(_) => Err(unavailable()),
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -125,13 +177,14 @@ impl Vault for NativeVault {
     fn delete(&self, reference: &CredentialRef) -> Result<(), JsError> {
         let mut failed = false;
         for i in 0..reference.chunks {
-            match entry(reference, i)
-                .and_then(|entry| entry.delete_credential().map_err(vault_error))
-            {
-                Ok(()) => (),
-                Err(error) if error == vault_error(keyring::Error::NoEntry) => (),
-                Err(_) => failed = true,
-            }
+            #[cfg(target_os = "macos")]
+            let deleted = delete_login_item(SERVICE, &reference.account(i));
+            #[cfg(not(target_os = "macos"))]
+            let deleted = entry(reference, i).and_then(|entry| match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(error) => Err(vault_error(error)),
+            });
+            failed |= deleted.is_err();
         }
         if failed { Err(unavailable()) } else { Ok(()) }
     }

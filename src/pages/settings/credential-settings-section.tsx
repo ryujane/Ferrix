@@ -1,4 +1,4 @@
-import { cleanup, effect, signal, Text, View } from "nsh";
+import { cleanup, effect, platform, signal, Text, View } from "nsh";
 import { Action } from "../../components/action";
 import { Dot } from "../../components/dot";
 import { Field, ErrorText, Segments } from "../../components/form-controls";
@@ -113,7 +113,7 @@ export function CredentialSettingsSection(props: {
         when={choice() === "keepass"}
         else={
           <Text class="text-(--text-size-12) leading-(--line-height-19) text-muted-foreground">
-            {ct("nativeDescription")}
+            {ct(platform.os === "macos" ? "nativeMacDescription" : "nativeDescription")}
           </Text>
         }
       >

@@ -173,22 +173,26 @@ Settings also supports a master-password-protected KeePass file in datadir. See
 
 Redis and Sentinel passwords, both TLS client private keys, the SSH password,
 SSH private key and its passphrase are stored together in an immutable credential
-generation. Public certificates and usernames stay in SQLite. Large secret bundles
-are divided into 2048-byte native entries for the Windows credential blob limit.
-Only opaque random references and cleanup metadata go into SQLite. Secrets are
-hydrated into memory for editing and connecting; serialized secret buffers are
-zeroed when released by the Rust credential adapter.
+generation. Public certificates and usernames stay in SQLite. macOS protects
+separately encrypted generations with a single login Keychain key. The remaining
+native backends use 2048-byte entries to accommodate Windows' credential blob limit.
+Only opaque random references and cleanup metadata go into SQLite. Loading or
+reloading the connection list reads SQLite. Editing or opening a connection
+reads the credential for that connection. Serialized secret buffers are zeroed
+when released by the Rust credential adapter.
 
 Saving records a durable preparation reference, writes and reads back the new
 native entry, then commits its SQLite pointer after rechecking the document revision.
 An OS-store or SQL failure retains the previous configuration and credential
 generation. Changes to groups, tags or favorites reuse unchanged credentials.
 Superseded/deleted generations are removed after commit. A denied deletion is
-queued for retry on the next open/save. Abandoned preparation entries are collected
+queued for retry on the next save. Abandoned preparation entries are collected
 after a 24-hour lease, with a final native-entry check before a pointer can commit.
 Active references are never collected.
 
-Version 1 plaintext configurations migrate automatically when the database opens.
+Version 1 plaintext configurations migrate when a connection is opened for use
+or when the database is saved. The connection list hides legacy secrets while
+waiting for migration.
 Credentials must reach the native store before their SQLite fields are cleared.
 Denied migration leaves the original data and schema version available for retry;
 it never silently substitutes unauthenticated settings. Successful migration enables

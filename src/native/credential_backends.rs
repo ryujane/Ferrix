@@ -1,11 +1,22 @@
 //! Backend selection is stored in the application database, never in exported preferences.
-use super::{
-    connection_credentials::{NativeVault, Vault},
-    keepass_vault::KeePassVault,
-};
+use super::{connection_credentials::Vault, keepass_vault::KeePassVault};
 use nsh_core::prelude::*;
 use rusqlite::Connection;
 use std::path::Path;
+
+pub(super) fn native(path: &Path) -> Box<dyn Vault> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(super::mac_keychain_vault::MacKeychainVault::new(
+            path.parent().unwrap(),
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Box::new(super::connection_credentials::NativeVault)
+    }
+}
 
 pub(super) fn provider(db: &Connection) -> Result<String, JsError> {
     db.query_row(
@@ -41,7 +52,7 @@ pub(super) fn selected(path: &Path) -> Result<Box<dyn Vault>, JsError> {
         "native".into()
     };
     match kind.as_str() {
-        "native" => Ok(Box::new(NativeVault)),
+        "native" => Ok(native(path)),
         "keepass" => Ok(Box::new(KeePassVault::cached(path.parent().unwrap())?)),
         _ => Err(super::keepass_vault::error(
             "STORE_INVALID",

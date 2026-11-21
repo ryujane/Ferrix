@@ -18,7 +18,7 @@ import { safeError } from "../../utils/errors";
 
 type ConnectionStorage = Pick<
   typeof AppStore,
-  "loadConnections" | "saveConnections"
+  "loadConnections" | "loadConnection" | "saveConnections"
 >;
 export type LiveConnection = {
   id: string;
@@ -50,6 +50,7 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
     connecting = signal<string[]>([]),
     activeId = signal<string>();
   const ready = signal(false);
+  const sessionRevisions = new Map<string, number>();
   let credentialEpoch = 0;
   let disposed = false,
     queue: Promise<unknown> = Promise.resolve();
@@ -95,6 +96,7 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
   }
   function mutate(
     change: (draft: ConnectionDocument) => void,
+    credentialId?: string,
   ): Promise<boolean> {
     const result = queue.then(async () => {
       if (disposed) return false;
@@ -107,7 +109,10 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
       try {
         const next: ConnectionDocument = JSON.parse(JSON.stringify(data()));
         change(next);
-        const saved = await store.saveConnections(JSON.stringify(next));
+        const saved = await store.saveConnections(
+          JSON.stringify(next),
+          credentialId,
+        );
         if (!disposed) applyDocument(JSON.parse(saved));
         return true;
       } catch (cause) {
@@ -142,8 +147,19 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
     });
     return ok ? id : undefined;
   }
+  async function loadConnection(id: string): Promise<SavedConnection> {
+    if (!ready()) throw new Error(hubT("reloadRequired"));
+    const epoch = credentialEpoch;
+    const saved = await store.loadConnection(id, data().revision);
+    if (disposed || epoch !== credentialEpoch)
+      throw new Error(hubT("reloadRequired"));
+    const value = copyConnection(JSON.parse(saved));
+    delete (value.config as Config & { production?: boolean }).production;
+    return value;
+  }
   async function connect(
-    value: SavedConnection,
+    id: string,
+    resolveConnection: () => SavedConnection | Promise<SavedConnection>,
     stillWanted = () => true,
   ): Promise<boolean> {
     if (!ready()) {
@@ -151,22 +167,25 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
       return false;
     }
     const epoch = credentialEpoch;
-    const configuration = copyConnection(value);
-    const existing = live().find((item) => item.id === value.id);
-    if (
-      existing &&
-      transportOptions(existing.configuration.config) ===
-        transportOptions(configuration.config)
-    ) {
-      activeId.set(existing.id);
-      return true;
-    }
-    if (connecting().includes(value.id)) return false;
-    connecting.set([...connecting(), value.id]);
+    const revision = data().revision;
+    if (connecting().includes(id)) return false;
+    connecting.set([...connecting(), id]);
     error.set("");
     let session: RedisSession | undefined;
     try {
-      session = await openConnection(value.config);
+      const configuration = await resolveConnection();
+      if (disposed || epoch !== credentialEpoch || !stillWanted()) return false;
+      const existing = live().find((item) => item.id === id);
+      if (
+        existing &&
+        transportOptions(existing.configuration.config) ===
+          transportOptions(configuration.config)
+      ) {
+        sessionRevisions.set(id, revision);
+        activeId.set(id);
+        return true;
+      }
+      session = await openConnection(configuration.config);
       await session.ping();
       if (disposed || epoch !== credentialEpoch || !stillWanted()) {
         session.close();
@@ -177,12 +196,12 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
         existing.session.close();
         existing.session.dispose();
       }
-      const saved = data().connections.find((item) => item.id === value.id);
+      const saved = data().connections.find((item) => item.id === id);
       live.set([
-        ...live().filter((item) => item.id !== value.id),
+        ...live().filter((item) => item.id !== id),
         {
-          id: value.id,
-          name: value.name,
+          id,
+          name: configuration.name,
           session,
           configuration,
           keySeparator: signal(
@@ -190,7 +209,8 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
           ),
         },
       ]);
-      activeId.set(value.id);
+      sessionRevisions.set(id, revision);
+      activeId.set(id);
       return true;
     } catch (cause) {
       if (session) {
@@ -201,14 +221,28 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
       return false;
     } finally {
       if (!disposed)
-        connecting.set(connecting().filter((id) => id !== value.id));
+        connecting.set(connecting().filter((item) => item !== id));
     }
+  }
+  async function connectSaved(value: SavedConnection, stillWanted = () => true) {
+    if (
+      ready() &&
+      !connecting().includes(value.id) &&
+      live().some((item) => item.id === value.id) &&
+      sessionRevisions.get(value.id) === data().revision &&
+      stillWanted()
+    ) {
+      activeId.set(value.id);
+      return true;
+    }
+    return connect(value.id, () => loadConnection(value.id), stillWanted);
   }
   function disconnect(id: string) {
     const item = live().find((v) => v.id === id);
     if (!item) return;
     item.session.close();
     item.session.dispose();
+    sessionRevisions.delete(id);
     live.set(live().filter((v) => v.id !== id));
     if (activeId() === id) activeId.set(live()[0]?.id);
   }
@@ -229,10 +263,14 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
     reload,
     mutate,
     createOrganization,
-    connect,
+    loadConnection,
+    connect: connectSaved,
+    connectDraft: (value: SavedConnection) =>
+      connect(value.id, () => copyConnection(value)),
     disconnect,
     credentialsChanged: async () => {
       ++credentialEpoch;
+      sessionRevisions.clear();
       data.set(emptyDocument());
       ready.set(false);
       live.set(
@@ -252,7 +290,7 @@ export function createConnectionHub(store: ConnectionStorage = AppStore) {
         const index = d.connections.findIndex((c) => c.id === value.id);
         if (index < 0) d.connections.push(normalized);
         else d.connections[index] = normalized;
-      }),
+      }, value.id),
     update: (id: string, change: Partial<SavedConnection>) =>
       mutate((d) => {
         const item = d.connections.find((c) => c.id === id);

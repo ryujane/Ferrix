@@ -8,6 +8,8 @@ mod keepass_vault;
 mod key_inventory;
 mod key_rows;
 mod key_tree;
+#[cfg(target_os = "macos")]
+mod mac_keychain_vault;
 pub(crate) use credential_settings::CredentialSettings;
 mod redis;
 mod security;

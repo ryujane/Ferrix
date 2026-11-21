@@ -160,7 +160,7 @@ export function ConnectionDialog(props: {
         return;
       }
       props.onSaved(value.id);
-      const connected = await props.hub.connect(value);
+      const connected = await props.hub.connectDraft(value);
       if (closed) return;
       if (!connected) {
         error.set(props.hub.error());

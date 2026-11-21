@@ -36,7 +36,7 @@ import {
 import { colors } from "./tag-colors";
 import { hubT } from "../../i18n";
 import { safeError } from "../../utils/errors";
-import { testConnection } from "../../data/connections/connection-client";
+import { openConnection } from "../../data/connections/connection-client";
 import type { ConnectionHub } from "../../data/connections/connection-state";
 import { ConnectionDialog } from "./connection-dialog";
 import { ErrorText } from "../../components/form-controls";
@@ -64,16 +64,16 @@ export function ConnectionHubPage(props: {
   const managerCreate = signal(false);
   const detailOpen = signal(false),
     mobileSidebar = signal(false),
-    detailTest = signal(""),
-    testing = signal(false);
+    editError = signal(""),
+    loadingEditor = signal(false);
   let searchInput: InputRef | undefined,
     detailCloseButton: ViewRef | undefined,
-    testRevision = 0;
+    editRequest = 0;
   const rowRefs = new Map<string, ViewRef>();
   const rowMenuRefs = new Map<string, ViewRef>();
   const focusedRow = signal<string>();
   cleanup(() => {
-    ++testRevision;
+    ++editRequest;
   });
   const active = () => hub.data().connections.find((c) => c.id === selected());
   const narrow = () => windowSize().width <= 760;
@@ -117,8 +117,9 @@ export function ConnectionHubPage(props: {
         : hubT(filter() === "favorites" ? "favorites" : "allConnections");
   const choose = (id: string) => {
     selected.set(id);
-    detailTest.set("");
-    ++testRevision;
+    editError.set("");
+    loadingEditor.set(false);
+    ++editRequest;
     detailOpen.set(true);
   };
   const chooseScope = (id: string) => {
@@ -149,18 +150,19 @@ export function ConnectionHubPage(props: {
     if (detailOpen()) detailCloseButton?.focus();
     else if (id) rowMenuRefs.get(id)?.focus();
   };
-  async function runTest(c: SavedConnection) {
-    if (testing()) return;
-    const current = ++testRevision;
-    testing.set(true);
-    detailTest.set(hubT("testing"));
+  async function editConnection(id: string) {
+    if (loadingEditor()) return;
+    const request = ++editRequest;
+    loadingEditor.set(true);
+    editError.set("");
     try {
-      await testConnection(c.config);
-      if (current === testRevision) detailTest.set(hubT("testSuccess"));
+      const value = await hub.loadConnection(id);
+      if (request === editRequest && detailOpen())
+        editor.set({ value, editing: true });
     } catch (cause) {
-      if (current === testRevision) detailTest.set(safeError(cause));
+      if (request === editRequest) editError.set(safeError(cause));
     } finally {
-      testing.set(false);
+      if (request === editRequest) loadingEditor.set(false);
     }
   }
   const dialogOpen = () =>
@@ -409,7 +411,7 @@ export function ConnectionHubPage(props: {
       <If when={!!hub.error()}>
         <View class="px-5 py-3 flex-row items-center gap-3 border-b border-border bg-destructive/10">
           <View class="flex-1">
-            <ErrorText message={safeError(hub.error())} />
+            <ErrorText message={hub.error()} />
           </View>
           <Action label={hubT("reload")} onPress={() => void hub.reload()} />
           <IconButton
@@ -747,12 +749,8 @@ export function ConnectionHubPage(props: {
                   label={hubT("editConnection")}
                   icon="pencil"
                   color={token("muted-foreground")}
-                  onPress={() =>
-                    editor.set({
-                      value: copyConnection(active()!),
-                      editing: true,
-                    })
-                  }
+                  disabled={loadingEditor() || !hub.available()}
+                  onPress={() => void editConnection(active()!.id)}
                 />
                 <IconButton
                   label={hubT("deleteConnection")}
@@ -880,6 +878,7 @@ export function ConnectionHubPage(props: {
                 </View>
               </Scroll>
               <View class="pt-4 gap-3 shrink-0">
+                <ErrorText message={editError()} />
                 <View class="flex-row gap-2">
                   <View class="flex-1 min-w-0">
                     <HubAction
@@ -918,7 +917,10 @@ export function ConnectionHubPage(props: {
       <If when={!!slowlogConnection()}>
         <SlowlogDialog
           connection={slowlogConnection()!}
-          openSession={props.openSlowlogSession}
+          openSession={async (id) => {
+            const { config } = await hub.loadConnection(id);
+            return (props.openSlowlogSession ?? openConnection)(config);
+          }}
           onClose={() => {
             const id = slowlogConnection()?.id;
             slowlogConnection.set(undefined);
