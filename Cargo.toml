@@ -2,6 +2,7 @@
 name = "nsh-app-ferrix"
 version = "0.1.3"
 edition = "2024"
+license = "MIT"
 publish = false
 
 [workspace]
