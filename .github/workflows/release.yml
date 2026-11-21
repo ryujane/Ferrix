@@ -150,9 +150,12 @@ jobs:
       - name: Install NSH
         run: bash .github/scripts/setup-nsh.sh nsh-linux-x86_64.tar.gz
 
-      - name: Verify installers and generate desktop update manifest
+      - name: Publish release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          prefix=".nsh/release/Ferrix-${GITHUB_REF_NAME#v}"
+          tag="$GITHUB_REF_NAME"
+          prefix=".nsh/release/Ferrix-${tag#v}"
           archives=("$prefix"-{macos-aarch64.tar.gz,macos-x86_64.tar.gz,windows-x86_64.zip,linux-x86_64.tar.gz})
           installers=("$prefix"-{macos-aarch64.dmg,macos-x86_64.dmg,windows-x86_64-setup.exe,linux-x86_64.deb})
           for asset in "${archives[@]}" "${installers[@]}"; do
@@ -161,21 +164,22 @@ jobs:
               exit 1
             fi
           done
-          nsh update-manifest "${archives[@]}" --out .nsh/release
 
-      - name: Publish release and assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="$GITHUB_REF_NAME"
+          notes_file=CHANGES.md
+          if [[ ! -s $notes_file || ! $(<"$notes_file") =~ [^[:space:]] ]]; then
+            echo "::error file=$notes_file::Write the release notes before tagging."
+            exit 1
+          fi
+          nsh update-manifest "${archives[@]}" --notes "$notes_file" --out .nsh/release
+
           if draft=$(gh release view "$tag" --json isDraft --jq .isDraft); then
             if [[ $draft == false ]]; then
               echo "Release $tag is already published."
               exit 0
             fi
           else
-            gh release create "$tag" --verify-tag --draft --generate-notes
+            gh release create "$tag" --verify-tag --draft
           fi
 
-          gh release upload "$tag" .nsh/release/*.{tar.gz,zip,dmg,exe,deb} .nsh/release/latest.json --clobber
-          gh release edit "$tag" --draft=false
+          gh release upload "$tag" "${archives[@]}" "${installers[@]}" .nsh/release/latest.json --clobber
+          gh release edit "$tag" --notes-file "$notes_file" --draft=false

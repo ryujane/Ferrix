@@ -1,0 +1,4 @@
+- SSH tunnels support RSA private keys and prompt you to verify the host fingerprint on first connection.
+- The key browser loads 10,000 distinct keys per batch. Key searches follow the Redis cursor until the scan completes.
+- JSON scrolling is smoother on macOS. Turn on line numbers from the reader toolbar when you need them.
+- The update dialog grows with the release notes and keeps the action buttons visible while longer notes scroll.

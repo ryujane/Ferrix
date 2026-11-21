@@ -45,3 +45,6 @@ The sidebar's Help page shows application identity from NSH's `appInfo()`, so
 version and build follow `nsh.json` and package-time overrides. Project URLs and
 the included build notes live in `src/pages/help/help-content.ts`, with English and Chinese
 copy in `locales/`. Project and feedback links open in the system browser.
+
+Update [`CHANGES.md`](CHANGES.md) before tagging a release. The release workflow
+uses it for both the in-app update notes and the GitHub Release description.
