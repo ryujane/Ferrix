@@ -1184,7 +1184,7 @@ impl SessionState {
         operation.validate(self.options.max_response_bytes.unwrap_or(262_144) as usize)?;
         let scan = operation.scan();
         let scan_page = match &operation {
-            Operation::KeyScan(page) => Some(page.clone()),
+            Operation::KeyScan(page, _) => Some(page.clone()),
             _ => None,
         };
         let hash_page = match &operation {
@@ -1227,7 +1227,7 @@ impl SessionState {
         let mutation = operation.is_mutation();
         #[cfg(feature = "redis-observer")]
         let timing = crate::redis_observer::Span::new(match &operation {
-            Operation::KeyScan(_) => "key_page",
+            Operation::KeyScan(..) => "key_page",
             Operation::KeyInfoBatch(..) => "metadata",
             _ => "interactive",
         });
@@ -1307,7 +1307,7 @@ enum Operation {
     Databases,
     ServerMetrics,
     ConsoleCommands(Option<String>),
-    KeyScan(scan::NextPage),
+    KeyScan(scan::NextPage, usize),
     HashScan(hashes::NextPage),
     SetScan(sets::NextPage),
     SetMutation(Vec<u8>, sets::Mutation),
@@ -1342,7 +1342,7 @@ impl Operation {
     fn is_background(&self) -> bool {
         matches!(
             self,
-            Self::KeyScan(_)
+            Self::KeyScan(..)
                 | Self::HashScan(_)
                 | Self::SetScan(_)
                 | Self::KeyInfoBatch(..)
@@ -1355,7 +1355,7 @@ impl Operation {
     }
     fn scan(&self) -> Option<Arc<dyn scan::ContinuationControl>> {
         match self {
-            Self::KeyScan(page) => Some(page.state.clone()),
+            Self::KeyScan(page, _) => Some(page.state.clone()),
             Self::HashScan(page) => Some(page.state.clone()),
             Self::SetScan(page) => Some(page.state.clone()),
             _ => None,
@@ -1388,7 +1388,7 @@ impl Operation {
             Self::Ping | Self::Databases | Self::ServerMetrics | Self::Clients => Ok(()),
             Self::Slowlog(count) => slowlog::validate(*count),
             Self::ConsoleCommands(name) => console::catalog::validate(name.as_deref()),
-            Self::KeyScan(page) => page.state.validate(),
+            Self::KeyScan(page, _) => page.state.validate(),
             Self::HashScan(page) => scan::ContinuationControl::validate(&*page.state),
             Self::SetScan(page) => scan::ContinuationControl::validate(&*page.state),
             Self::SetMutation(key, mutation) => sets::validate_mutation(key, mutation, budget),
@@ -1677,7 +1677,7 @@ async fn execute(
                 .await
                 .map(OperationResult::Mutation)
         }
-        Operation::KeyScan(page) => scan::next(state, connection, page)
+        Operation::KeyScan(page, limit) => scan::next(state, connection, page, limit)
             .await
             .map(OperationResult::KeyPage),
         Operation::Ping => ping(state, connection).await.map(OperationResult::Ping),

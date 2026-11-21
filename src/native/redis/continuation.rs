@@ -4,6 +4,8 @@ use super::*;
 use scan::{ContinuationControl, ContinuationSlot, RetainedBatch};
 use std::{collections::VecDeque, sync::Mutex};
 
+pub(super) const MAX_PAGE_ITEMS: usize = 200;
+
 pub(super) struct Buffer<T> {
     pub(super) slot: Option<ContinuationSlot>,
     pub(super) pending: VecDeque<T>,
@@ -30,12 +32,17 @@ impl<T> Buffer<T> {
         self.slot.take();
     }
 
-    pub(super) fn drain(&mut self, budget: usize, size: impl Fn(&T) -> usize) -> Vec<T> {
+    pub(super) fn drain(
+        &mut self,
+        budget: usize,
+        limit: usize,
+        size: impl Fn(&T) -> usize,
+    ) -> Vec<T> {
         let mut items = Vec::new();
         let mut bytes = 0;
         while let Some(item) = self.pending.front() {
             let size = size(item);
-            if items.len() == 200 || bytes + size > budget {
+            if items.len() == limit || bytes + size > budget {
                 break;
             }
             bytes += size;
@@ -223,7 +230,7 @@ impl<T: Send> CollectionProgress<T> {
     }
 
     pub(super) fn drain(&mut self, budget: usize, size: impl Fn(&T) -> usize) -> (Vec<T>, bool) {
-        let items = self.buffer.drain(budget, size);
+        let items = self.buffer.drain(budget, MAX_PAGE_ITEMS, size);
         let complete = self.started && self.cursor == 0 && self.buffer.pending.is_empty();
         if complete {
             self.buffer.slot.take();

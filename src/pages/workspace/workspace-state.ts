@@ -127,6 +127,7 @@ export const dirty = (tab?: KeyTab) =>
     ? tab.collection.rows.some(rowDirty)
     : tab.value !== tab.saved || valuePreviewDirty(tab.preview));
 const previewBytes = 65536;
+const keyBrowserBatchSize = 10_000;
 
 export function createWorkspaceState(
   session: WorkspaceSession,
@@ -312,11 +313,12 @@ export function createWorkspaceState(
     const current = scanRevision;
     const filtered = filteredScan;
     const entries = keys();
+    let remaining = keyBrowserBatchSize;
     scanBusy.set(true);
     error.set("");
     try {
       for (;;) {
-        const page = await handle.nextPage();
+        const page = await handle.nextPage(filtered ? undefined : remaining);
         if (disposed || current !== scanRevision) return;
         complete.set(page.complete);
         continuation.set(page.continuation ?? null);
@@ -326,6 +328,7 @@ export function createWorkspaceState(
           ? entries.appendPage(page.keys).map((index) => page.keys[index])
           : [];
         if (added.length) {
+          if (!filtered) remaining -= added.length;
           keys.set(entries);
           try {
             // KeyInventory associates metadata with the most recently appended page.
@@ -343,7 +346,7 @@ export function createWorkspaceState(
           const first = entries.firstEntry();
           if (first) void openKey(first.key);
         }
-        if (page.complete || switching() || (!filtered && page.keys.length > 0))
+        if (page.complete || switching() || (!filtered && remaining <= 0))
           break;
       }
     } catch (cause) {

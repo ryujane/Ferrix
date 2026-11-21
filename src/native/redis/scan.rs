@@ -233,12 +233,22 @@ impl RedisKeyScan {
 
 #[class]
 impl RedisKeyScan {
-    /// Advance by at most one Redis SCAN command. Concurrent calls reject BUSY.
-    pub fn next_page(&self) -> Result<Later<RedisKeyPage>, JsError> {
+    /// Advance by at most one Redis SCAN command. A positive limit can shrink the page below its 200-key cap.
+    /// Concurrent calls reject BUSY.
+    pub fn next_page(&self, limit: Option<u32>) -> Result<Later<RedisKeyPage>, JsError> {
+        if limit == Some(0) {
+            return Err(error(
+                "INVALID_ARGUMENT",
+                "Expected a positive key page limit",
+            ));
+        }
+        let limit = limit.map_or(continuation::MAX_PAGE_ITEMS, |limit| {
+            (limit as usize).min(continuation::MAX_PAGE_ITEMS)
+        });
         let page = self.state.next_page()?;
         self.state
             .session
-            .submit(Operation::KeyScan(page), |result| match result {
+            .submit(Operation::KeyScan(page, limit), |result| match result {
                 OperationResult::KeyPage(page) => page,
                 _ => unreachable!(),
             })
@@ -279,6 +289,7 @@ pub(super) async fn next(
     state: &SessionState,
     connection: &mut Option<Connection>,
     page: NextPage,
+    limit: usize,
 ) -> Result<RedisKeyPage, JsError> {
     let scan = &page.state;
     scan.validate()?;
@@ -412,7 +423,7 @@ pub(super) async fn next(
     }
     let budget = (state.options.max_response_bytes.unwrap_or(262144) as usize).min(262144);
     let mut progress = scan.progress.lock().unwrap();
-    let keys = progress.buffer.drain(budget, Vec::len);
+    let keys = progress.buffer.drain(budget, limit, Vec::len);
     let complete = progress.buffer.pending.is_empty()
         && progress
             .cluster

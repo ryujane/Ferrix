@@ -23,14 +23,30 @@ test("key search reads all cursor pages, including empty batches", async () => {
   await app.type("live-key-filter", "sparse");
   await app.submit("live-key-filter");
   await app.waitFor("text:Scan complete");
-  expect(app.texts()).toContain("Keys 117");
+  expect(app.texts()).toContain("Keys 10380");
   expect(app.count("workspace-load-more")).toBe(0);
 });
+
+test("key browser loads 10000 distinct keys with a SCAN count of 1000", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.press("load-batch");
+  await app.waitFor("text:Load more");
+  expect(app.texts()).toContain("SCAN COUNT 1000");
+  expect(app.texts()).toContain("Keys 10000");
+  await app.press("workspace-load-more");
+  await app.waitFor("text:Load more");
+  expect(app.texts()).toContain("Keys 20000");
+  await app.press("workspace-load-more");
+  await app.waitFor("text:Scan complete");
+  expect(app.texts()).toContain("Keys 20005");
+}, 30_000);
 
 test("key browser keeps folder and key navigation across SCAN pages", async () => {
   const app = await open("./key-browser.fixture.tsx", options);
   await app.press("load-small");
+  await app.waitFor("text:Load more");
   await app.waitFor("text:beta");
+  expect(app.texts()).toContain("SCAN COUNT 3000");
   expect(app.texts()).toContain("2");
   await app.press("text:bucket");
   expect(app.texts()).not.toContain("beta");
@@ -39,9 +55,11 @@ test("key browser keeps folder and key navigation across SCAN pages", async () =
   expect(app.texts()).not.toContain("beta");
   await app.press("text:bucket");
   await app.waitFor("text:beta");
+  await app.press("text:extras");
+  await app.waitFor("text:Load more");
   await app.press("workspace-load-more");
   await app.waitFor("text:plain");
-  expect(app.texts()).toContain("Keys 4");
+  expect(app.texts()).toContain("Keys 10002");
   expect(app.texts()).toContain("3");
   await app.press("text:beta");
   expect(app.texts()).toContain("Selected bucket:child:beta");
@@ -85,7 +103,7 @@ test("native rows dispatch actions for the key, folder and empty area", async ()
 test("stopping an in-flight page preserves loaded keys and allows a fresh scan", async () => {
   const app = await open("./key-browser.fixture.tsx", options);
   await app.press("load-small");
-  await app.waitFor("text:beta");
+  await app.waitFor("text:Load more");
   await app.press("hold-page");
   await app.press("workspace-load-more");
   await app.waitFor("release-page");
@@ -95,17 +113,17 @@ test("stopping an in-flight page preserves loaded keys and allows a fresh scan",
   expect(app.count("workspace-load-more")).toBe(0);
 
   await app.press("release-page");
-  expect(app.texts()).toContain("Keys 2");
+  expect(app.texts()).toContain("Keys 10000");
   expect(app.texts()).not.toContain("plain");
   await app.press("text:beta");
   expect(app.texts()).toContain("Selected bucket:child:beta");
 
   await app.press("workspace-restart-scan");
-  await app.waitFor("workspace-load-more");
+  await app.waitFor("text:Load more");
   expect(app.texts()).not.toContain("Loading stopped");
   await app.press("workspace-load-more");
   await app.waitFor("text:Scan complete");
-  expect(app.texts()).toContain("Keys 4");
+  expect(app.texts()).toContain("Keys 10002");
   expect(app.count("workspace-stop-scan")).toBe(0);
 });
 
