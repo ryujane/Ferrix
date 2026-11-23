@@ -1,4 +1,5 @@
 import {
+  cleanup,
   computed,
   effect,
   signal,
@@ -14,10 +15,12 @@ import { Action } from "../../components/action";
 import { Icon } from "../../components/icon";
 import { IconButton } from "../../components/icon-button";
 import { useClipboardCopy } from "../../utils/clipboard";
+import type { VisibleKeys } from "./visible-key-types";
 import type { WorkspaceState } from "./workspace-state";
 import { workspaceT as w } from "./workspace-text";
 
 export function KeyBrowser(props: {
+  active?: boolean;
   state: WorkspaceState;
   separator: string;
   onOpenKey: (key: Uint8Array) => void;
@@ -29,6 +32,7 @@ export function KeyBrowser(props: {
 }) {
   const state = props.state;
   const grouped = signal(true);
+  const visibleKeys = signal<VisibleKeys>();
   const copy = useClipboardCopy();
 
   effect(() => {
@@ -36,6 +40,11 @@ export function KeyBrowser(props: {
     const nested = grouped();
     untracked(() => state.configureKeys(separator, nested));
   });
+  effect(() => {
+    const visible = props.active === false || state.switching() ? undefined : visibleKeys();
+    untracked(() => state.setVisibleKeys(visible));
+  });
+  cleanup(() => state.setVisibleKeys());
   const databaseLabel = (database: number, count?: string | null) =>
     `DB${database} · ${count != null ? w("databaseKeys", { count }) : w("unknownCount")}`;
   const databaseItems = computed(() =>
@@ -121,6 +130,7 @@ export function KeyBrowser(props: {
       </View>
       <KeyRows
         inventory={state.keyTreeInventory()}
+        onVisibleKeysChanged={visibleKeys.set}
         onOpenKey={({ key }) => props.onOpenKey(key)}
         onCopyName={({ name }) => void copy(name)}
         onRenameKey={({ id }) => props.onKeyAction("rename", id)}

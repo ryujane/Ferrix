@@ -78,12 +78,17 @@ pub enum KeyRowsEvent {
     CreateKey { prefix: String },
     /// Requests confirmation to delete keys in a folder.
     DeleteFolder { prefix: String },
+    /// Visible keys whose type has yet to be looked up.
+    VisibleKeysChanged {
+        layout_revision: u32,
+        keys: Vec<Vec<u8>>,
+    },
 }
 
 #[derive(Clone, Copy)]
 pub struct KeyRowsApi {
     list: ElementRef,
-    visible: Stored<Option<(usize, usize)>>,
+    visible: Signal<Option<(usize, usize)>>,
 }
 
 #[methods]
@@ -92,7 +97,7 @@ impl KeyRowsApi {
     pub fn scroll_to_row(&self, index: u32, at_end: bool) {
         if self
             .visible
-            .get()
+            .get_untracked()
             .is_some_and(|(first, last)| (first..=last).contains(&(index as usize)))
         {
             return;
@@ -304,7 +309,7 @@ impl Tree {
 pub fn KeyRows(props: KeyRowsProps, cx: Scope<KeyRowsEvent>) -> impl IntoElement {
     let api = KeyRowsApi {
         list: element_ref(),
-        visible: stored(None),
+        visible: signal(None),
     };
     cx.methods(api);
     let inventory = computed(move || {
@@ -343,6 +348,26 @@ pub fn KeyRows(props: KeyRowsProps, cx: Scope<KeyRowsEvent>) -> impl IntoElement
             inventory.0.with(KeyInventory::row_count) as usize
         })
     });
+    let visible_keys = computed(move || {
+        tree.expansion.get();
+        let (Some((inventory, _)), Some((first, last))) = (inventory.get(), api.visible.get())
+        else {
+            return (0, Vec::new());
+        };
+        inventory.0.with(|model| {
+            (
+                model.layout_revision(),
+                model.visible_type_keys(first, last),
+            )
+        })
+    });
+    effect(move || {
+        let (layout_revision, keys) = visible_keys.get();
+        cx.emit(KeyRowsEvent::VisibleKeysChanged {
+            layout_revision,
+            keys,
+        });
+    });
     let current_index = computed(move || tree.current_index());
     effect(move || {
         if tree.focused.get() {
@@ -368,7 +393,7 @@ pub fn KeyRows(props: KeyRowsProps, cx: Scope<KeyRowsEvent>) -> impl IntoElement
         .child(when(
             move || count.get() != 0,
             move || {
-                api.visible.replace(None);
+                api.visible.set(None);
                 view()
                     .element_ref(&tree.focus)
                     .role(AccessibilityRole::Tree)
@@ -415,7 +440,7 @@ pub fn KeyRows(props: KeyRowsProps, cx: Scope<KeyRowsEvent>) -> impl IntoElement
                             ..Viewability::default()
                         })
                         .on_viewable_items_change(move |items: &ViewableItems| {
-                            api.visible.replace(items.viewable);
+                            api.visible.set(items.viewable);
                         })
                         .estimated_item_size(px(28.0))
                         .content_padding(px(4.0))

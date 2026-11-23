@@ -14,11 +14,15 @@ function Fixture() {
   const scanPattern = signal("");
   const scanCount = signal<number>();
   const pageHeld = signal(false);
+  const typesHeld = signal(false);
+  const requestedPlainType = signal(false);
   const cancelled = signal(0);
   const disposed = signal(0);
   let holdNextPage = false;
   let pendingInvalidations = 0;
   let releasePage: (() => void) | undefined;
+  let holdNextTypes = false;
+  let releaseTypes: (() => void) | undefined;
   let mode: "small" | "large" | "batch" = "small";
   const customScanPreferences = { ...defaultPreferences, scanCount: 1_000 };
   const firstBrowseBatch = [
@@ -26,10 +30,21 @@ function Fixture() {
     "bucket:child:beta",
     ...Array.from({ length: 9_998 }, (_, i) => `extras:key-${i}`),
   ];
+  async function getKeyInfoBatch(keys: Uint8Array[]) {
+    if (keys.some(key => decode(key) === "plain")) requestedPlainType.set(true);
+    if (holdNextTypes) {
+      holdNextTypes = false;
+      await new Promise<void>(resolve => {
+        releaseTypes = resolve;
+        typesHeld.set(true);
+      });
+    }
+    return { database: 0, items: keys.map(key => ({ key, type: "string" })) };
+  }
   const session = {
-    getInfo: () => ({ database: 0 }),
+    getInfo: () => ({ database: 0, generation: "1", closed: false }),
     getKeyInfo: async () => ({ exists: false }),
-    getKeyInfoBatch: async () => ({ items: [] }),
+    getKeyInfoBatch,
     startKeyScan({ pattern, count }: { pattern?: Uint8Array; count?: number }) {
       const match = pattern ? decode(pattern) ?? "" : "";
       scanPattern.set(match);
@@ -121,7 +136,10 @@ function Fixture() {
         mode = "batch";
         void state.refresh();
       }} />
-      <Action testID="hold-page" label="Hold next page" onPress={() => { holdNextPage = true; }} />
+      <View class="flex-row">
+        <Action testID="hold-page" label="Hold next page" onPress={() => { holdNextPage = true; }} />
+        <Action testID="hold-types" label="Hold types" onPress={() => { holdNextTypes = true; }} />
+      </View>
       <Action testID="invalidate-page" label="Invalidate next cursor" onPress={() => {
         pendingInvalidations++;
       }} />
@@ -132,7 +150,15 @@ function Fixture() {
           pageHeld.set(false);
         }} />
       )}
+      {typesHeld() && (
+        <Action testID="release-types" label="Release types" onPress={() => {
+          releaseTypes?.();
+          releaseTypes = undefined;
+          typesHeld.set(false);
+        }} />
+      )}
       <Text>{`Selected ${selected()}`}</Text>
+      {requestedPlainType() && <Text>Requested plain type</Text>}
       <Text>{action()}</Text>
       <Text>{`Keys ${state.keys().length}`}</Text>
       <Text>{`SCAN MATCH ${scanPattern() || "(all keys)"}`}</Text>

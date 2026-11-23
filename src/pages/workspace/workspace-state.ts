@@ -1,4 +1,4 @@
-import { cleanup, computed, signal } from "nsh";
+import { cleanup, computed, effect, signal, untracked } from "nsh";
 import { KeyInventory } from "ferrix/native";
 import type {
   CreateKeyOptions,
@@ -13,6 +13,7 @@ import type { ToastController } from "../../components/toast";
 import { defaultPreferences, type Preferences } from "../../data/preferences";
 import type { WorkspaceSnapshot } from "../../data/workspace-history";
 import { safeError } from "../../utils/errors";
+import { createVisibleKeyTypes } from "./visible-key-types";
 import {
   decode,
   displayBytes,
@@ -147,6 +148,17 @@ export function createWorkspaceState(
   const database = signal(session.getInfo().database),
     switching = signal(false),
     mutating = signal(false);
+  // SCAN and TYPE share the Session's background transport. Give a name batch priority.
+  const typeReadBlocked = () => scanBusy() || switching() || mutating();
+  const { load: loadVisibleTypes, setVisibleKeys } = createVisibleKeyTypes(
+    session,
+    keys,
+    entries => keys.set(entries),
+    typeReadBlocked,
+  );
+  effect(() => {
+    if (!typeReadBlocked()) untracked(() => void loadVisibleTypes());
+  });
   const databases = signal<RedisDatabase[]>([
     { database: database(), keyCount: null },
   ]);
@@ -283,6 +295,7 @@ export function createWorkspaceState(
     ++epoch;
     ++scanRevision;
     cancelScan();
+    setVisibleKeys();
     cancelFolderDelete();
     cancelCollections();
   });
@@ -353,23 +366,10 @@ export function createWorkspaceState(
         continuation.set(page.continuation ?? null);
         if (page.complete) cancelScan();
 
-        const added = page.keys.length
-          ? entries.appendPage(page.keys).map((index) => page.keys[index])
-          : [];
-        if (added.length) {
-          if (!filtered) remaining -= added.length;
+        const added = page.keys.length ? entries.appendPage(page.keys).length : 0;
+        if (added) {
+          if (!filtered) remaining -= added;
           keys.set(entries);
-          try {
-            // KeyInventory associates metadata with the most recently appended page.
-            const metadata = await session.getKeyInfoBatch(added, {
-              keyType: true,
-            });
-            if (disposed || current !== scanRevision) return;
-            if (entries.setTypes(metadata.items)) keys.set(entries);
-          } catch {
-            /* A denied metadata command must not hide successfully scanned Keys. */
-          }
-          if (disposed || current !== scanRevision) return;
         }
         if (autoOpenPending && !tabs().length && entries.length) {
           const first = entries.firstEntry();
@@ -2120,6 +2120,7 @@ export function createWorkspaceState(
     restoreWorkspace,
     keys: () => keys(),
     keyTreeInventory,
+    setVisibleKeys,
     configureKeys,
     expandKeyFolders,
     keyById,

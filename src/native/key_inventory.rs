@@ -7,6 +7,9 @@ use std::{
 
 const SLAB_SIZE: usize = 64 * 1024;
 const UNCERTAIN: u32 = 1 << 31;
+const TYPE_RESOLVED: u32 = 1 << 30;
+const MAX_TYPE_KEYS: usize = 200;
+const MAX_TYPE_BYTES: usize = 262_144;
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 struct Location {
@@ -192,7 +195,7 @@ pub struct KeyInventoryRow {
     pub entry: Option<KeyInventoryEntry>,
 }
 
-/// Metadata returned for a key in the most recent SCAN page.
+/// Metadata returned for a key in the current type request.
 #[derive(JsObject)]
 pub struct KeyInventoryType {
     pub key: Vec<u8>,
@@ -222,6 +225,26 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 impl KeyInventory {
+    pub(super) fn visible_type_keys(&self, first: usize, last: usize) -> Vec<Vec<u8>> {
+        let mut keys = Vec::new();
+        let mut bytes = 0;
+        for index in first..=last.min(self.tree.count().saturating_sub(1) as usize) {
+            let Some(slot) = self.tree.row(index as u32).and_then(|row| row.slot) else {
+                continue;
+            };
+            if self.keys.records[slot as usize].info & TYPE_RESOLVED != 0 {
+                continue;
+            }
+            let key = self.keys.bytes(slot).expect("visible key");
+            if keys.len() == MAX_TYPE_KEYS || bytes + key.len() > MAX_TYPE_BYTES {
+                break;
+            }
+            keys.push(key.to_vec());
+            bytes += key.len();
+        }
+        keys
+    }
+
     fn changed(&mut self) {
         self.revision = self.revision.wrapping_add(1);
     }
@@ -301,13 +324,10 @@ impl KeyInventory {
 
     /// Adds distinct binary keys. Returns their indices in the input page.
     pub fn append_page(&mut self, page: Vec<Vec<u8>>) -> Vec<u32> {
-        self.pending.clear();
         let mut added = Vec::new();
         for (index, key) in page.iter().enumerate() {
             if let Some(slot) = self.keys.append(key) {
                 self.tree.append(slot, key);
-                self.pending
-                    .insert(slot, self.keys.records[slot as usize].location);
                 added.push(index as u32);
             }
         }
@@ -318,7 +338,22 @@ impl KeyInventory {
         added
     }
 
-    /// Applies metadata only to surviving entries from the most recent page.
+    /// Captures identities for a single type request, omitting resolved or removed keys.
+    pub fn prepare_types(&mut self, keys: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+        self.pending.clear();
+        keys.into_iter()
+            .filter(|key| {
+                let Some(slot) = self.keys.slot(key) else {
+                    return false;
+                };
+                let record = &self.keys.records[slot as usize];
+                record.info & TYPE_RESOLVED == 0
+                    && self.pending.insert(slot, record.location).is_none()
+            })
+            .collect()
+    }
+
+    /// Applies metadata only to surviving entries captured by the current type request.
     pub fn set_types(&mut self, items: Vec<KeyInventoryType>) -> bool {
         let mut changed = false;
         for item in items {
@@ -335,7 +370,7 @@ impl KeyInventory {
                     self.types.len() as u32
                 })
             });
-            let info = (record.info & UNCERTAIN) | kind;
+            let info = (record.info & UNCERTAIN) | TYPE_RESOLVED | kind;
             changed |= record.info != info;
             record.info = info;
         }
@@ -352,7 +387,7 @@ impl KeyInventory {
         let id = hex(key);
         let name = std::str::from_utf8(key).map_or_else(|_| format!("0x{id}"), str::to_owned);
         let info = self.keys.records[slot as usize].info;
-        let kind = (info & !UNCERTAIN)
+        let kind = (info & !(UNCERTAIN | TYPE_RESOLVED))
             .checked_sub(1)
             .and_then(|id| self.types.get(id as usize))
             .cloned();
