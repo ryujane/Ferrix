@@ -1,19 +1,11 @@
 # AGENTS.md
 
-## Project
 
 Ferrix is a native Redis client built on [nsh](https://nsh.dev) mixed mode: a TSX UI plus a Rust crate in the same repo, whose exports the UI imports.
 
-The product targets macOS, Windows and Linux desktops. Local platform verification runs on macOS.
+The product targets macOS, Windows and Linux desktops.
 
-## Commands
-
-- `nsh run` — run the app on this machine in dev mode; `--target ios|android|web|macos|linux|windows|gpui` for another platform
-- `nsh check` — `cargo check` the crate, then type-check the TSX against the generated declarations (this is the only lint/type gate; there is no separate lint command)
-- `nsh test` — `cargo test`, then discover `*.test.tsx` / `*.test.ts` files importing `nsh/test` and run them headless
-- `nsh test --target macos` — run the UI tests in the native macOS host with platform input
-- `cargo fmt -- --check` — check Rust formatting
-- `nsh package --target web|ios|android|macos|linux|windows` — build a package (output under `.nsh/out/`)
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first for setup, checks, the project's layout, and the rules for commits and pull requests. [docs/DESIGN.md](docs/DESIGN.md) describes Ferrix's design.
 
 ## Architecture
 
@@ -62,5 +54,3 @@ LLM-friendly index of all nsh docs: <https://nsh.dev/llms.txt>. Every page is al
 - Tailwind (classes resolved natively): <https://nsh.dev/docs/tailwind.md>
 - CLI subcommands: <https://nsh.dev/docs/cli.md>
 - Headless testing with `nsh trace`: <https://nsh.dev/docs/testing-and-trace.md>
-
-
