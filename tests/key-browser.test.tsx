@@ -42,7 +42,8 @@ test("key browser loads 10000 distinct keys with a SCAN count of 1000", async ()
 }, 30_000);
 
 test("key browser keeps folder and key navigation across SCAN pages", async () => {
-  const app = await open("./key-browser.fixture.tsx", options);
+  // NSH delivers raw key events in headless tests when simulating Linux.
+  const app = await open("./key-browser.fixture.tsx", { ...options, platform: "linux" });
   await app.press("load-small");
   await app.waitFor("text:Load more");
   await app.waitFor("text:beta");

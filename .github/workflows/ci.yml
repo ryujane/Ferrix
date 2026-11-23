@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_INCREMENTAL: '0'
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev libgtk-4-dev libwebkitgtk-6.0-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - name: Install NSH from the locked release
+        run: |
+          locked=$(sed -n '/^name = "nsh-core"$/ { n; n; s/^source = ".*?tag=\([^#]*\)#\([0-9a-f]\{40\}\)"$/\1 \2/p; }' Cargo.lock)
+          read -r version revision <<< "$locked"
+          if [[ -z "$version" || -z "$revision" ]]; then
+            echo '::error file=Cargo.lock::Expected nsh-core to be pinned to a Git release tag.'
+            exit 1
+          fi
+          NSH_VERSION="$version" bash .github/scripts/setup-nsh.sh nsh-linux-x86_64.tar.gz
+          printf 'NSH_LOCKED_REVISION=%s\n' "$revision" >> "$GITHUB_ENV"
+
+      - name: Verify the NSH revision
+        run: |
+          version=$(nsh --version)
+          echo "$version"
+          cli_revision=$(sed -n 's/^nsh .* (\([0-9a-f]\{7,40\}\))$/\1/p' <<< "$version")
+          if [[ -z "$cli_revision" || "$NSH_LOCKED_REVISION" != "$cli_revision"* ]]; then
+            echo '::error file=Cargo.lock::The NSH CLI revision does not match nsh-core.'
+            exit 1
+          fi
+
+      - name: Type check
+        run: nsh check
+
+      - name: Build
+        run: nsh build
+
+      - name: Test
+        run: nsh test
