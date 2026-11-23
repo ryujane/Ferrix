@@ -402,6 +402,10 @@
     "browserCaption": "Redis 数据库行为",
     "scanCount": "单次 SCAN 批处理数量",
     "scanCountDescription": "范围 100–10,000，默认 3,000。降低可减少每次扫描的服务器工作量。",
+    "keyTabMode": "键详情打开方式",
+    "keyTabModeDescription": "选择其他键时，有未保存修改的标签页会保留。",
+    "keyTabModeNew": "新建标签页",
+    "keyTabModeReplace": "替换当前标签页",
     "formatter": "默认数据格式化方式",
     "formatterDescription": "String 与 Hash 字段值的首选显示格式。",
     "format": {
@@ -437,6 +441,7 @@
     "invalidFontSize": "字号必须为 11–18 之间的整数。",
     "invalidUiFontScale": "整体字号缩放必须为 90%、100%、110%、120% 或 125%。",
     "invalidScanCount": "SCAN 数量必须为 100–10,000 之间的整数。",
+    "invalidKeyTabMode": "键详情打开方式必须为 'new' 或 'replace'。",
     "invalidFormatter": "格式必须为 auto、json、raw 或 hex。",
     "invalidBoolean": "开关值必须为 true 或 false。",
     "openSettings": "打开首选项"

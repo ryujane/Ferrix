@@ -65,6 +65,7 @@ function PreferencesSelect(props: {
   label: string;
   value: string;
   items: { value: string; title: string }[];
+  triggerClass?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -81,7 +82,7 @@ function PreferencesSelect(props: {
       trigger={
         <View
           testID={props.id}
-          class="h-9 min-w-0 flex-row items-center gap-3 rounded border border-border bg-inset px-3 hover:bg-accent"
+          class={`h-9 ${props.triggerClass ?? "min-w-0"} flex-row items-center gap-3 rounded border border-border bg-inset px-3 hover:bg-accent`}
         >
           <Text class="flex-1 text-(--text-size-12)/(--line-height-16) text-foreground">
             {props.items.find((item) => item.value === props.value)?.title ??
@@ -415,7 +416,10 @@ export function SettingsPage(props: {
     ["theme", "uiFontScale", "editorFont", "fontSize"].some((key) =>
       field("appearance", key),
     );
-  const browser = () => field("browser", "scanCount") || field("formatting", "formatter");
+  const browser = () =>
+    field("browser", "scanCount") ||
+    field("browser", "keyTabMode") ||
+    field("formatting", "formatter");
   const credentialSection = () =>
     (category() === "general" || category() === "credentials") &&
     (!query().trim() ||
@@ -451,14 +455,16 @@ export function SettingsPage(props: {
     />
   );
   const select = (
-    key: "language" | "formatter",
+    key: "language" | "formatter" | "keyTabMode",
     items: { value: string; title: string }[],
+    triggerClass?: string,
   ) => (
     <PreferencesSelect
       id={`settings-${key}`}
       label={t(`settings.${key}`)}
       value={draft()[key]}
       items={items}
+      triggerClass={triggerClass}
       onChange={(value) =>
         update(key, value as PreferencesDocument[typeof key])
       }
@@ -835,6 +841,21 @@ export function SettingsPage(props: {
                   caption={t("settings.browserCaption")}
                   color={token("success")}
                 >
+                  {field("browser", "keyTabMode") && (
+                    <SettingRow
+                      title={t("settings.keyTabMode")}
+                      description={t("settings.keyTabModeDescription")}
+                    >
+                      {select(
+                        "keyTabMode",
+                        [
+                          { value: "new", title: t("settings.keyTabModeNew") },
+                          { value: "replace", title: t("settings.keyTabModeReplace") },
+                        ],
+                        "min-w-44",
+                      )}
+                    </SettingRow>
+                  )}
                   {field("browser", "scanCount") && (
                     <SettingRow
                       title={t("settings.scanCount")}

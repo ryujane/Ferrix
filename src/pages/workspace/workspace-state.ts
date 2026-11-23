@@ -1,4 +1,4 @@
-import { cleanup, computed, effect, signal, untracked } from "nsh";
+import { batch, cleanup, computed, effect, signal, untracked } from "nsh";
 import { KeyInventory } from "ferrix/native";
 import type {
   CreateKeyOptions,
@@ -271,6 +271,12 @@ export function createWorkspaceState(
       cursor.scan.dispose();
       collectionCursors.delete(id);
     }
+  }
+  function releaseTabLoads(id: string) {
+    loads.delete(id);
+    previewLoads.delete(id);
+    jsonLoads.delete(id);
+    releaseCollection(id);
   }
   function cancelCollections() {
     for (const id of collectionCursors.keys()) releaseCollection(id);
@@ -603,12 +609,31 @@ export function createWorkspaceState(
     };
   }
   async function openKey(key: Uint8Array) {
-    if (switching()) return;
+    if (disposed || switching()) return;
     autoOpenPending = false;
     const id = keyId(key);
-    activeId.set(id);
-    if (tabs().some((tab) => tab.id === id)) return;
-    tabs.set([...tabs(), keyTab(key)]);
+    const opened = tabs();
+    if (opened.some((tab) => tab.id === id)) {
+      activeId.set(id);
+      return;
+    }
+    const current = active();
+    const next = keyTab(key);
+    batch(() => {
+      if (
+        preferences().keyTabMode === "replace" &&
+        current &&
+        !mutating() &&
+        !current.uncertain &&
+        !dirty(current)
+      ) {
+        releaseTabLoads(current.id);
+        tabs.set(opened.map((tab) => (tab.id === current.id ? next : tab)));
+      } else {
+        tabs.set([...opened, next]);
+      }
+      activeId.set(id);
+    });
     await load(id);
   }
   async function restoreWorkspace(saved: WorkspaceSnapshot) {
@@ -772,12 +797,7 @@ export function createWorkspaceState(
     if (mutating() || switching() || (!discard && targets.some(dirty)))
       return false;
     autoOpenPending = false;
-    for (const tab of targets) {
-      loads.delete(tab.id);
-      previewLoads.delete(tab.id);
-      jsonLoads.delete(tab.id);
-      releaseCollection(tab.id);
-    }
+    for (const tab of targets) releaseTabLoads(tab.id);
     tabs.set(tabs().filter((tab) => !closing.has(tab.id)));
     const selected = activeId();
     if (selected !== undefined && closing.has(selected))
@@ -1691,10 +1711,7 @@ export function createWorkspaceState(
     }
   }
   function forgetKey(id: string) {
-    loads.delete(id);
-    previewLoads.delete(id);
-    jsonLoads.delete(id);
-    releaseCollection(id);
+    releaseTabLoads(id);
     tabs.set(tabs().filter((item) => item.id !== id));
     removeKey(id);
     if (activeId() === id) activeId.set(tabs().at(-1)?.id);
