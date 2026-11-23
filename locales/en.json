@@ -402,6 +402,10 @@
     "browserCaption": "Redis database behavior",
     "scanCount": "SCAN batch count",
     "scanCountDescription": "100–10,000. Lower counts reduce server work per scan; default 3,000.",
+    "keyTabMode": "Open key details in",
+    "keyTabModeDescription": "Tabs with unsaved edits stay open when you select another key.",
+    "keyTabModeNew": "New tab",
+    "keyTabModeReplace": "Replace current tab",
     "formatter": "Default value formatter",
     "formatterDescription": "The preferred display format for String and Hash values.",
     "format": {
@@ -437,6 +441,7 @@
     "invalidFontSize": "Font size must be a whole number from 11 to 18.",
     "invalidUiFontScale": "Choose a font scale of 90%, 100%, 110%, 120%, or 125%.",
     "invalidScanCount": "SCAN count must be a whole number from 100 to 10,000.",
+    "invalidKeyTabMode": "Key tab mode must be 'new' or 'replace'.",
     "invalidFormatter": "Formatter must be auto, json, raw or hex.",
     "invalidBoolean": "Switch values must be true or false.",
     "openSettings": "Open preferences"

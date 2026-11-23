@@ -10,6 +10,7 @@ export interface Preferences {
   fontSize: number;
   uiFontScale: number;
   scanCount: number;
+  keyTabMode: "new" | "replace";
   formatter: ValueFormatter;
   autoReconnect: boolean;
   restoreTabs: boolean;
@@ -28,6 +29,7 @@ export const defaultPreferences: Readonly<Preferences> = {
   fontSize: defaultEditorFontSize,
   uiFontScale: 100,
   scanCount: 3000,
+  keyTabMode: "new",
   formatter: "auto",
   autoReconnect: false,
   restoreTabs: false,
@@ -71,6 +73,10 @@ export function parsePreferences(value: unknown): Preferences {
     p.scanCount > 10000
   )
     throw new Error("settings.invalidScanCount");
+  const keyTabMode =
+    p.keyTabMode === undefined ? defaultPreferences.keyTabMode : p.keyTabMode;
+  if (keyTabMode !== "new" && keyTabMode !== "replace")
+    throw new Error("settings.invalidKeyTabMode");
   if (
     typeof p.formatter !== "string" ||
     !["auto", "json", "raw", "hex"].includes(p.formatter)
@@ -85,6 +91,7 @@ export function parsePreferences(value: unknown): Preferences {
     fontSize: p.fontSize,
     uiFontScale,
     scanCount: p.scanCount,
+    keyTabMode,
     formatter: p.formatter as ValueFormatter,
     autoReconnect: p.autoReconnect as boolean,
     restoreTabs: p.restoreTabs as boolean,
