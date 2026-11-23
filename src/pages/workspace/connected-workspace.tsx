@@ -190,6 +190,8 @@ export function SessionWorkspace(props: WorkspaceOptions & {
     endpoints(props.live.configuration.config).map(address).join(", ");
   const separator = () => props.live.keySeparator();
   const terminalActive = () => props.showConsole ?? terminalSelected();
+  const keyBrowserVisible = () =>
+    !props.consoleFullscreen && sidebarOpen() && (!narrow() || !terminalActive());
   const initialized = signal(!props.history);
   let initializing = false,
     disposed = false;
@@ -522,13 +524,10 @@ export function SessionWorkspace(props: WorkspaceOptions & {
           minSize={200}
           maxSize={460}
           fixed={!narrow()}
-          visible={
-            !props.consoleFullscreen &&
-            sidebarOpen() &&
-            (!narrow() || !terminalActive())
-          }
+          visible={keyBrowserVisible()}
         >
           <KeyBrowser
+            active={props.active && keyBrowserVisible()}
             state={state}
             separator={separator()}
             searchRef={(ref) => {

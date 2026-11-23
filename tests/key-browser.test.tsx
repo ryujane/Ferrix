@@ -154,6 +154,26 @@ test("key browser completes a load more request after cursor invalidation", asyn
   expect(app.texts()).toContain("Keys 10002");
 });
 
+test("key names load before the visible type lookup completes", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.press("hold-types");
+  await app.press("load-small");
+  await app.waitFor("release-types");
+  await app.waitFor("text:Load more");
+  expect(app.texts()).toContain("Keys 10000");
+  await app.press("release-types");
+  await app.press("workspace-load-more");
+  await app.waitFor("text:Scan complete");
+  expect(app.texts()).toContain("Keys 10002");
+  expect(app.texts()).not.toContain("Requested plain type");
+
+  await app.press("text:beta");
+  await app.keyboard.press("end");
+  await app.waitFor("text:Selected plain");
+  await app.waitFor("text:Requested plain type");
+  await app.waitFor("text:STR");
+});
+
 test("key search keeps the applied filter after cursor invalidation", async () => {
   const app = await open("./key-browser.fixture.tsx", options);
   await app.press("invalidate-page");

@@ -27,7 +27,7 @@ test("Rust key inventory preserves binary identity across growth and deletion", 
   expect(inventory.firstEntry()?.id).toBe("00ff8000");
 });
 
-test("Rust key inventory preserves folder order and rejects stale page metadata", () => {
+test("Rust key inventory preserves folder order and rejects stale type metadata", () => {
   const inventory = new KeyInventory();
   const first = encode("a:one");
   const other = encode("b:two");
@@ -38,19 +38,25 @@ test("Rust key inventory preserves folder order and rejects stale page metadata"
   inventory.toggleFolder("a:");
   expect(inventory.rowAt(1)?.label).toBe("b");
 
+  expect(inventory.prepareTypes([first, other, later])).toEqual([first, other, later]);
+  inventory.appendPage([encode("c:four")]);
   const renamed = encode("b:four");
   expect(inventory.rename(first, renamed)).toBe(true);
   expect(inventory.setTypes([
     { key: first, type: "list" },
     { key: renamed, type: "stream" },
     { key: other, type: "hash" },
+    { key: later, type: null },
   ])).toBe(true);
   expect(inventory.lookup(first)).toBeNull();
   expect(inventory.lookup(renamed)?.type).toBeNull();
   expect(inventory.lookup(other)?.type).toBe("hash");
+  expect(inventory.prepareTypes([renamed, other, later])).toEqual([renamed]);
 
   inventory.clear();
-  inventory.appendPage([first, other]);
+  inventory.appendPage([first, other, renamed]);
+  expect(inventory.setTypes([{ key: renamed, type: "stream" }])).toBe(false);
+  expect(inventory.lookup(renamed)?.type).toBeNull();
   expect(inventory.rowAt(0)?.expanded).toBe(false);
   expect(inventory.rowAt(1)?.label).toBe("b");
   inventory.configure(":", false);
