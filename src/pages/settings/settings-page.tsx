@@ -677,11 +677,15 @@ export function SettingsPage(props: {
                       title={t("settings.language")}
                       description={t("settings.languageDescription")}
                     >
-                      {select("language", [
-                        { value: "system", title: t("language.system") },
-                        { value: "zh-CN", title: "简体中文" },
-                        { value: "en", title: "English" },
-                      ])}
+                      {select(
+                        "language",
+                        [
+                          { value: "system", title: t("language.system") },
+                          { value: "zh-CN", title: "简体中文" },
+                          { value: "en", title: "English" },
+                        ],
+                        "min-w-40",
+                      )}
                     </SettingRow>
                   )}
                   {(
