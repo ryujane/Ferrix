@@ -480,33 +480,14 @@
   "help": {
     "title": "Help & about",
     "description": "A native Redis desktop client for browsing keys and working with data.",
-    "build": "Build %{build}",
-    "development": "Development build",
-    "release": "Release build",
     "unknownVersion": "Version unavailable",
     "changelog": "What's new",
-    "thisVersion": "Included in this build",
-    "viewHistory": "View full commit history",
     "projectLinks": "Project & feedback",
     "repository": "GitHub repository",
     "issues": "Issues & feature requests",
     "openLink": "Open %{name} in browser",
     "openError": "Could not open the link. Please try again.",
-    "feedbackHint": "Found a bug or have an idea? Include your app version and steps to reproduce when opening an issue.",
-    "changes": {
-      "help": {
-        "title": "Help & application info",
-        "description": "Find the app version, build notes and project links in one place."
-      },
-      "preferences": {
-        "title": "Local preferences",
-        "description": "Save language, theme and editor preferences locally. Edit or export settings as JSON."
-      },
-      "navigation": {
-        "title": "Native window & navigation",
-        "description": "A custom title bar and sidebar navigation with Chinese, English, dark and light appearances."
-      }
-    }
+    "feedbackHint": "Found a bug or have an idea? Include your app version and steps to reproduce when opening an issue."
   },
   "language": {
     "label": "Language",
