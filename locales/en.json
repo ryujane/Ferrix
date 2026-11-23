@@ -34,6 +34,7 @@
     "nothingFound": "No matching keys",
     "scanComplete": "Scan complete",
     "scanStopped": "Loading stopped",
+    "scanInvalidated": "The key scan was interrupted. Restart the scan to continue.",
     "scanProgress": "Scanning",
     "selectKey": "Select a key to inspect",
     "selectKeyHint": "Choose a key in the explorer, or press Ctrl / ⌘ K to search.",
