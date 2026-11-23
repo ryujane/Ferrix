@@ -141,3 +141,45 @@ test("stopping the first page shows the stopped state with an empty tree", async
   await app.press("workspace-restart-scan");
   await app.waitFor("text:beta");
 });
+
+test("key browser completes a load more request after cursor invalidation", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.press("load-small");
+  await app.waitFor("text:Load more");
+  await app.type("live-key-filter", "unsubmitted");
+  await app.press("invalidate-page");
+  await app.press("workspace-load-more");
+  await app.waitFor("text:Scan complete");
+  expect(app.texts()).toContain("SCAN MATCH (all keys)");
+  expect(app.texts()).toContain("Keys 10002");
+});
+
+test("key search keeps the applied filter after cursor invalidation", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.press("invalidate-page");
+  await app.type("live-key-filter", "sparse");
+  await app.submit("live-key-filter");
+  await app.waitFor("text:Scan complete");
+  expect(app.texts()).toContain("SCAN MATCH *sparse*");
+  expect(app.texts()).toContain("Keys 10380");
+  expect(app.texts()).toContain("Cancelled 2 / disposed 2");
+});
+
+test("key browser stops after a second cursor invalidation and offers a fresh scan", async () => {
+  const app = await open("./key-browser.fixture.tsx", options);
+  await app.press("load-small");
+  await app.waitFor("text:Load more");
+  await app.press("invalidate-page");
+  await app.press("invalidate-page");
+  await app.press("workspace-load-more");
+  await app.waitFor("text:Loading stopped");
+  expect(app.texts()).toContain("Keys 10000");
+  expect(app.texts()).toContain("Cancelled 2 / disposed 2");
+  expect(app.count("workspace-load-more")).toBe(0);
+
+  await app.press("workspace-restart-scan");
+  await app.waitFor("text:Load more");
+  await app.press("workspace-load-more");
+  await app.waitFor("text:Scan complete");
+  expect(app.texts()).toContain("Keys 10002");
+});

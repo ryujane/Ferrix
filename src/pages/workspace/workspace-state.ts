@@ -2,6 +2,7 @@ import { cleanup, computed, signal } from "nsh";
 import { KeyInventory } from "ferrix/native";
 import type {
   CreateKeyOptions,
+  KeyScanOptions,
   RedisDatabase,
   RedisKeyInfo,
   RedisKeyScan,
@@ -193,7 +194,7 @@ export function createWorkspaceState(
     disposed = false,
     ttlBusy = false;
   let autoOpenPending = true;
-  let filteredScan = false;
+  let keyScanOptions: KeyScanOptions = {};
   let bulkJob: { cancelled: boolean; scan?: RedisKeyScan } | undefined;
   const loads = new Map<string, number>();
   const previewLoads = new Map<string, number>();
@@ -308,18 +309,46 @@ export function createWorkspaceState(
   }
 
   async function nextPage() {
-    const handle = scan();
+    let handle = scan();
     if (!handle || scanBusy() || complete() || switching()) return;
     const current = scanRevision;
-    const filtered = filteredScan;
+    const options = keyScanOptions;
+    const filtered = !!options.pattern;
     const entries = keys();
+    const requestedTotal = entries.length + keyBrowserBatchSize;
     let remaining = keyBrowserBatchSize;
+    let restarted = false;
+    let replaceResults = false;
     scanBusy.set(true);
     error.set("");
     try {
       for (;;) {
-        const page = await handle.nextPage(filtered ? undefined : remaining);
+        let page;
+        try {
+          const limit = filtered ? undefined : Math.min(remaining, keyBrowserBatchSize);
+          page = await handle.nextPage(limit);
+        } catch (cause) {
+          if (disposed || current !== scanRevision) return;
+          if (
+            (cause as { code?: string })?.code !== "CURSOR_INVALIDATED" ||
+            restarted ||
+            switching()
+          )
+            throw cause;
+          cancelScan();
+          continuation.set(null);
+          handle = session.startKeyScan(options);
+          scan.set(handle);
+          restarted = true;
+          replaceResults = true;
+          remaining = requestedTotal;
+          continue;
+        }
         if (disposed || current !== scanRevision) return;
+        if (replaceResults) {
+          clearKeys();
+          replaceResults = false;
+        }
         complete.set(page.complete);
         continuation.set(page.continuation ?? null);
         if (page.complete) cancelScan();
@@ -350,7 +379,14 @@ export function createWorkspaceState(
           break;
       }
     } catch (cause) {
-      if (!disposed && current === scanRevision) reportError(safeError(cause));
+      if (disposed || current !== scanRevision) return;
+      const invalidated = (cause as { code?: string })?.code === "CURSOR_INVALIDATED";
+      if (invalidated || !scan()) {
+        cancelScan();
+        continuation.set(null);
+        scanStopped.set(true);
+      }
+      reportError(invalidated ? w("scanInvalidated") : safeError(cause));
     } finally {
       if (!disposed && current === scanRevision) scanBusy.set(false);
     }
@@ -367,13 +403,12 @@ export function createWorkspaceState(
     error.set("");
     const filter = pattern(),
       match = /[*?\[\\]/.test(filter) ? filter : `*${filter}*`;
-    const scanPattern = filter && match !== "*" ? encode(match) : undefined;
-    filteredScan = !!scanPattern;
+    keyScanOptions = {
+      pattern: filter && match !== "*" ? encode(match) : undefined,
+      count: preferences().scanCount,
+    };
     try {
-      scan.set(session.startKeyScan({
-        pattern: scanPattern,
-        count: preferences().scanCount,
-      }));
+      scan.set(session.startKeyScan(keyScanOptions));
       return nextPage();
     } catch (cause) {
       reportError(safeError(cause));

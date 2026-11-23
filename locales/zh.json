@@ -34,6 +34,7 @@
     "nothingFound": "没有匹配的键",
     "scanComplete": "扫描完成",
     "scanStopped": "已停止加载",
+    "scanInvalidated": "键扫描已中断，请重新扫描。",
     "scanProgress": "扫描进行中",
     "selectKey": "选择一个键以查看详情",
     "selectKeyHint": "从左侧键树选择，或按 Ctrl / ⌘ K 搜索。",

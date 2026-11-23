@@ -17,6 +17,7 @@ function Fixture() {
   const cancelled = signal(0);
   const disposed = signal(0);
   let holdNextPage = false;
+  let pendingInvalidations = 0;
   let releasePage: (() => void) | undefined;
   let mode: "small" | "large" | "batch" = "small";
   const customScanPreferences = { ...defaultPreferences, scanCount: 1_000 };
@@ -35,8 +36,14 @@ function Fixture() {
       scanCount.set(count);
       let page = 0;
       let offset = 0;
+      let invalidated = false;
       return {
         async nextPage(limit?: number) {
+          if (pendingInvalidations) {
+            pendingInvalidations--;
+            invalidated = true;
+          }
+          if (invalidated) throw { code: "CURSOR_INVALIDATED" };
           if (match === "*sparse*") {
             const current = page++;
             const complete = current === 120;
@@ -115,6 +122,9 @@ function Fixture() {
         void state.refresh();
       }} />
       <Action testID="hold-page" label="Hold next page" onPress={() => { holdNextPage = true; }} />
+      <Action testID="invalidate-page" label="Invalidate next cursor" onPress={() => {
+        pendingInvalidations++;
+      }} />
       {pageHeld() && (
         <Action testID="release-page" label="Release page" onPress={() => {
           releasePage?.();
