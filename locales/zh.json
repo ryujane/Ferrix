@@ -480,33 +480,14 @@
   "help": {
     "title": "帮助与关于",
     "description": "原生 Redis 桌面客户端，让键值浏览与数据操作更顺手。",
-    "build": "构建 %{build}",
-    "development": "开发构建",
-    "release": "发布构建",
     "unknownVersion": "版本信息不可用",
     "changelog": "更新日志",
-    "thisVersion": "此构建包含的更新",
-    "viewHistory": "查看完整提交记录",
     "projectLinks": "项目与反馈",
     "repository": "GitHub 仓库",
     "issues": "问题与功能建议",
     "openLink": "在浏览器中打开%{name}",
     "openError": "无法打开链接，请重试。",
-    "feedbackHint": "遇到问题或有新想法？提交 Issue 时，请附上应用版本与复现步骤。",
-    "changes": {
-      "help": {
-        "title": "帮助与应用信息",
-        "description": "集中查看应用版本、更新记录与项目链接。"
-      },
-      "preferences": {
-        "title": "本机偏好设置",
-        "description": "保存语言、外观和编辑器偏好，也可使用 JSON 编辑与导出配置。"
-      },
-      "navigation": {
-        "title": "原生窗口与导航",
-        "description": "自定义标题栏与侧栏导航，支持中英文以及深色、浅色外观。"
-      }
-    }
+    "feedbackHint": "遇到问题或有新想法？提交 Issue 时，请附上应用版本与复现步骤。"
   },
   "language": {
     "label": "语言",
