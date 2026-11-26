@@ -26,8 +26,23 @@ folding JSON editor, and a Redis console.
 
 ## Development
 
-Use the nsh 0.6.1 stable CLI to match the `nsh-*` dependencies pinned in
-`Cargo.lock`. Check the installed version with `nsh --version`.
+Install the stable NSH CLI with the official installer for your platform.
+
+**macOS and Linux**
+
+```sh
+curl -fsSL https://nsh.dev/install.sh | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://nsh.dev/install.ps1 | iex
+```
+
+On Windows, open a new terminal after installation. For platform prerequisites, see the [NSH installation guide](https://nsh.dev/docs/installation).
+
+Run the development commands from the repository root.
 
 ```sh
 nsh run --target macos       # run the native macOS app with hot reload

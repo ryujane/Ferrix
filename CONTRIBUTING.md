@@ -5,17 +5,14 @@ For a bug, include your Ferrix version, operating system, and steps to reproduce
 
 ## Local development
 
-Install Rust and the NSH CLI. Ferrix currently uses NSH `0.6.1`.
-Match the CLI release to the `nsh-*` dependencies in `Cargo.toml` and `Cargo.lock`.
+Install Rust and the stable NSH CLI.
 See the [NSH installation guide](https://nsh.dev/docs/installation) for platform setup.
 
 ```sh
-nsh --version
 nsh run
 ```
 
 TSX changes hot-reload. Rust changes rebuild and restart the app.
-When upgrading NSH, update the crate pins, lockfile, and release workflow's CLI version together.
 
 ## Checks
 
