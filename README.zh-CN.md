@@ -22,7 +22,23 @@ Ferrix 支持 Redis 单机、集群和 Sentinel 连接。工作区可以调整�
 
 ## 开发
 
-使用 nsh 0.6.1 稳定版 CLI，与 `Cargo.lock` 中锁定的 `nsh-*` 依赖保持一致。可以用 `nsh --version` 查看本地版本。
+使用对应平台的官方安装脚本安装稳定版 NSH CLI。
+
+**macOS 和 Linux**
+
+```sh
+curl -fsSL https://nsh.dev/install.sh | sh
+```
+
+**Windows（PowerShell）**
+
+```powershell
+irm https://nsh.dev/install.ps1 | iex
+```
+
+Windows 安装完成后，请重新打开终端。各平台所需的开发工具见 [NSH 安装指南](https://nsh.dev/zh-CN/docs/installation)。
+
+在仓库根目录运行以下开发命令。
 
 ```sh
 nsh run --target macos       # 启动 macOS 原生应用，支持热重载

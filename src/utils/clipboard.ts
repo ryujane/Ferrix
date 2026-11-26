@@ -5,9 +5,8 @@ import { t } from "../i18n";
 export function useClipboardCopy() {
   const toast = useToast();
   return async (text: string): Promise<boolean> => {
-    try {
-      await Clipboard.writeText(text);
-    } catch {
+    const result = await Clipboard.writeText(text).catch(() => "failed");
+    if (result === "failed") {
       toast.error(t("toast.copyFailed"), { id: "clipboard" });
       return false;
     }
